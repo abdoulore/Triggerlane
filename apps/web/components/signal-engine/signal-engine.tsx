@@ -5,7 +5,7 @@ import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
-type SignalId = "price" | "funding" | "pnl";
+export type SignalId = "price" | "funding" | "pnl";
 
 interface SignalDatum {
   id: SignalId;
@@ -92,7 +92,7 @@ function addPnlInstrument(group: THREE.Group, color: THREE.Color) {
   group.add(baseline);
 }
 
-function SignalEngineScene({ stage, focused, onFocus }: { stage: number; focused: SignalId | null; onFocus: (signal: SignalId) => void }) {
+export function SignalEngineScene({ stage, focused, onFocus, context = "prototype" }: { stage: number; focused: SignalId | null; onFocus: (signal: SignalId) => void; context?: "prototype" | "landing" }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [fallback, setFallback] = useState(false);
   const reducedMotion = Boolean(useReducedMotion());
@@ -132,7 +132,7 @@ function SignalEngineScene({ stage, focused, onFocus }: { stage: number; focused
     scene.add(world);
     const mint = new THREE.Color(0x70f2cc);
     const softMint = new THREE.Color(0x55bfa2);
-    const quiet = new THREE.Color(0x35413d);
+    const quiet = new THREE.Color(context === "landing" ? 0x52615c : 0x35413d);
     const dim = new THREE.Color(0x202825);
     const positions = [new THREE.Vector3(-3.75, 2.15, .2), new THREE.Vector3(-4.15, 0, -.35), new THREE.Vector3(-3.7, -2.15, .25)];
     const corePosition = new THREE.Vector3(1.05, 0, 0);
@@ -258,8 +258,8 @@ function SignalEngineScene({ stage, focused, onFocus }: { stage: number; focused
       const compact = camera.aspect < .78;
       const intermediate = !compact && camera.aspect < 1.15;
       camera.position.z = compact ? 18 : intermediate ? 15.5 : 11.8;
-      world.scale.setScalar(compact ? .86 : intermediate ? .82 : .9);
-      world.position.set(compact ? 1 : intermediate ? .55 : .8, compact ? .4 : 0, 0);
+      world.scale.setScalar(compact ? .86 : intermediate ? .82 : context === "landing" ? .86 : .9);
+      world.position.set(compact ? context === "landing" ? 1.35 : 1 : intermediate ? context === "landing" ? .9 : .55 : context === "landing" ? 1.45 : .8, compact ? .4 : 0, 0);
       labelAssets.forEach(({ sprite }) => { sprite.visible = width >= 1700 && camera.aspect >= 1.5; });
       camera.updateProjectionMatrix();
       renderFrame(reducedMotion ? 1 : 0);
@@ -307,10 +307,10 @@ function SignalEngineScene({ stage, focused, onFocus }: { stage: number; focused
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [focused, onFocus, reducedMotion, stage]);
+  }, [context, focused, onFocus, reducedMotion, stage]);
 
   if (fallback) {
-    return <div className="signal-engine-fallback" role="img" aria-label="Signal Engine fallback: price, funding, and position profit converge into one action.">
+    return <div className={`signal-engine-fallback signal-engine-fallback-${context}`} role="img" aria-label="Signal Engine fallback: price, funding, and position profit converge into one action.">
       <div className="fallback-signal-stack">{SIGNALS.map((signal, index) => <div className={stage >= index + 1 ? "ready" : ""} key={signal.id}><i>{stage >= index + 1 ? <Check size={15} weight="bold" /> : `0${index + 1}`}</i><span><b>{signal.label}</b><small>{signal.value} · {signal.target}</small></span></div>)}</div>
       <div className={`fallback-convergence ${stage >= 3 ? "ready" : ""}`}><span>ALL TRUE</span><i /></div>
       <div className={`fallback-action ${stage >= 4 ? "fired" : ""}`}><small>ONE-SHOT ACTION</small><strong>SELL 25% SOL</strong><span>{stage >= 4 ? "FILLED ONCE" : "WAITING"}</span></div>

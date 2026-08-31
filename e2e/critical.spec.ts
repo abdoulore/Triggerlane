@@ -114,11 +114,12 @@ async function seedHistoryAudit(page: Page) {
   await expect(page.getByText("Blocked Audit", { exact: true })).toBeVisible();
 }
 
-test("landing teaches and renders a real 3D Ghost cycle", async ({ page }, testInfo) => {
+test("landing teaches the product through the real 3D Signal Engine", async ({ page }, testInfo) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "TRIGGERLANE", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /TRY TRIGGERLANE/ }).first()).toHaveAttribute("href", "/trade");
-  const canvas = page.locator('canvas[data-scene="condition-lattice"]');
+  await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
+  const primary = page.getByRole("link", { name: /CREATE A TRIGGER/ }).first();
+  await expect(primary).toHaveAttribute("href", "/trade");
+  const canvas = page.locator('canvas[data-scene="signal-engine"]');
   await expect(canvas).toBeVisible();
   const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
     const context = element.getContext("webgl2") ?? element.getContext("webgl");
@@ -128,22 +129,36 @@ test("landing teaches and renders a real 3D Ghost cycle", async ({ page }, testI
     return sample.reduce((total, value) => total + value, 0);
   });
   expect(pixels).toBeGreaterThan(0);
+  const firstViewport = await page.evaluate(() => ({
+    primaryBottom: document.querySelector(".landing-primary")!.getBoundingClientRect().bottom,
+    proofTop: document.querySelector(".capability-proof")!.getBoundingClientRect().top,
+    viewport: window.innerHeight,
+  }));
+  expect(firstViewport.primaryBottom).toBeLessThan(firstViewport.viewport);
+  expect(firstViewport.proofTop).toBeLessThan(firstViewport.viewport);
   await page.screenshot({ path: testInfo.outputPath("triggerlane-hero-desktop.png"), fullPage: false });
-  await page.getByRole("button", { name: /WATCH A TRIGGER/ }).click();
-  await expect(page.getByText("Receipt generated", { exact: true })).toBeVisible({ timeout: 9_000 });
-  await expect(page.getByText("FILLED AT $284.14 · 16 BPS")).toBeVisible();
+  await page.getByRole("button", { name: /PLAY THE EXAMPLE/ }).click();
+  await expect(page.getByText("FILLED ONCE", { exact: true }).first()).toBeVisible({ timeout: 9_000 });
+  await page.getByRole("link", { name: "SEE HOW IT WORKS" }).click();
+  await expect(page.getByRole("heading", { name: "Conditional trading in three human steps." })).toBeVisible();
+  await page.getByRole("tab", { name: /Get one clear result/ }).click();
+  await expect(page.getByText("FILLED ONCE, RECEIPT STORED")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("landing-desktop.png"), fullPage: false });
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
+  expect(await page.locator("body").innerText()).not.toContain("—");
+  await page.screenshot({ path: testInfo.outputPath("phase-24-landing-full.png"), fullPage: true, animations: "disabled" });
 });
 
 test("landing remains framed and nonblank on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "TRIGGERLANE", exact: true })).toBeVisible();
-  await expect(page.locator('canvas[data-scene="condition-lattice"]')).toBeVisible();
-  const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: innerWidth }));
+  await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
+  await expect(page.locator('canvas[data-scene="signal-engine"]')).toBeVisible();
+  const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: innerWidth, primaryBottom: document.querySelector(".landing-primary")!.getBoundingClientRect().bottom, proofTop: document.querySelector(".capability-proof")!.getBoundingClientRect().top, innerHeight }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
+  expect(dimensions.primaryBottom).toBeLessThan(dimensions.innerHeight);
+  expect(dimensions.proofTop).toBeLessThan(dimensions.innerHeight);
   await page.screenshot({ path: testInfo.outputPath("landing-mobile.png"), fullPage: false });
 });
 

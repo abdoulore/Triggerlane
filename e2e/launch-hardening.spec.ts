@@ -63,7 +63,7 @@ for (const viewport of [
 
 test("every public and product page passes the launch accessibility gate", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "TRIGGERLANE", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
   expect(await seriousAxeViolations(page)).toEqual([]);
 
   for (const item of productPages) {
@@ -88,11 +88,11 @@ test("reduced motion keeps both 3D explanations meaningful and still", async ({ 
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
-  const landing = page.locator('canvas[data-scene="condition-lattice"]');
+  const landing = page.locator('canvas[data-scene="signal-engine"]');
   await expect(landing).toBeVisible();
-  const firstLanding = await sample('canvas[data-scene="condition-lattice"]');
+  const firstLanding = await sample('canvas[data-scene="signal-engine"]');
   await page.waitForTimeout(700);
-  expect(await sample('canvas[data-scene="condition-lattice"]')).toEqual(firstLanding);
+  expect(await sample('canvas[data-scene="signal-engine"]')).toEqual(firstLanding);
 
   const ghost = await createGhost(page);
   await page.goto(`/ghost/${ghost.id}`);
@@ -112,8 +112,10 @@ test("landing has a complete no-WebGL explanation", async ({ page }) => {
     } as typeof HTMLCanvasElement.prototype.getContext;
   });
   await page.goto("/");
-  await expect(page.getByLabel("Three market conditions converging into one execution")).toBeVisible();
-  await expect(page.getByText("EXECUTE", { exact: true }).first()).toBeVisible();
+  const fallback = page.getByRole("img", { name: /Signal Engine fallback/ });
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toContainText("SOL price");
+  await expect(fallback).toContainText("SELL 25% SOL");
 });
 
 test("loading, error, empty, unavailable, and terminal explanations stay explicit", async ({ page }) => {
@@ -143,8 +145,8 @@ test("loading, error, empty, unavailable, and terminal explanations stay explici
 
 test("first-time comprehension and honesty gate covers the ten product questions", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText(/OBSERVING · SOL \/ USDC/).first()).toBeVisible();
-  await expect(page.getByText(/Triggerlane watches the market conditions/i).first()).toBeVisible();
+  await expect(page.getByText(/0 OF 3 READY/).first()).toBeVisible();
+  await expect(page.getByText(/Choose one signal or combine several/i).first()).toBeVisible();
   await expect(page.getByText(/simulated capital/i).first()).toBeVisible();
 
   await page.goto("/trade");
@@ -162,7 +164,7 @@ test("first-time comprehension and honesty gate covers the ten product questions
 });
 
 test("core routes stay inside interaction and navigation budgets", async ({ page }) => {
-  for (const item of [{ path: "/", heading: /^TRIGGERLANE$/ }, ...productPages]) {
+  for (const item of [{ path: "/", heading: "Trade the whole moment." }, ...productPages]) {
     const started = Date.now();
     await page.goto(item.path);
     await expect(page.getByRole("heading", { name: item.heading })).toBeVisible();
