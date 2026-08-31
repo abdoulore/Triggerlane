@@ -681,3 +681,91 @@ test("mobile prioritizes monitoring and opens Composer as a focused sheet", asyn
   await page.getByRole("button", { name: "Close Composer" }).click();
   await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeHidden();
 });
+
+test("Signal Engine converges three readable signals into one action", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const failedResponses: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      const location = message.location();
+      consoleErrors.push(`${message.text()} @ ${location.url}:${location.lineNumber}`);
+    }
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+  });
+  await page.goto("/signal-engine");
+  await expect(page.getByRole("heading", { name: "The market is still forming." })).toBeVisible();
+  await expect(page.locator('canvas[data-scene="signal-engine"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: /PRICE.*284\.14/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /FUNDING.*0\.061%/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /POSITION P&L.*12\.8%/ })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "One-shot action" })).toContainText("SELL 25% SOL");
+
+  const pixels = await page.locator('canvas[data-scene="signal-engine"]').evaluate((element: HTMLCanvasElement) => {
+    const context = element.getContext("webgl2") ?? element.getContext("webgl");
+    if (!context) return 0;
+    const sample = new Uint8Array(4 * 30 * 30);
+    context.readPixels(0, 0, 30, 30, context.RGBA, context.UNSIGNED_BYTE, sample);
+    return sample.reduce((total, value) => total + value, 0);
+  });
+  expect(pixels).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "RUN CONVERGENCE" }).click();
+  await expect(page.getByText("ACTION FIRED ONCE", { exact: true })).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByRole("complementary", { name: "One-shot action" })).toContainText("FILLED ONCE");
+  await page.screenshot({ path: testInfo.outputPath("signal-engine-executed-desktop.png"), fullPage: false });
+  expect(consoleErrors, failedResponses.join("\n")).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
+test("Signal Engine remains framed and touch-readable on mobile", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/signal-engine");
+  await expect(page.locator('canvas[data-scene="signal-engine"]')).toBeVisible();
+  await page.getByRole("button", { name: /FUNDING.*0\.061%/ }).click();
+  await expect(page.getByRole("button", { name: /FUNDING.*0\.061%/ })).toHaveAttribute("aria-pressed", "true");
+  const dimensions = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
+  expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
+  await page.screenshot({ path: testInfo.outputPath("signal-engine-mobile.png"), fullPage: false });
+});
+
+test("Signal Engine reduced-motion state is complete and still", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/signal-engine");
+  const canvas = page.locator('canvas[data-scene="signal-engine"]');
+  await expect(canvas).toBeVisible();
+  const sample = () => canvas.evaluate((element: HTMLCanvasElement) => {
+    const context = element.getContext("webgl2") ?? element.getContext("webgl");
+    if (!context) return [];
+    const pixels = new Uint8Array(4 * 16 * 16);
+    context.readPixels(0, 0, 16, 16, context.RGBA, context.UNSIGNED_BYTE, pixels);
+    return Array.from(pixels);
+  });
+  const first = await sample();
+  await page.waitForTimeout(350);
+  expect(await sample()).toEqual(first);
+  await page.getByRole("button", { name: "RUN CONVERGENCE" }).click();
+  await expect(page.getByText("ACTION FIRED ONCE", { exact: true })).toBeVisible({ timeout: 2_500 });
+});
+
+test("Signal Engine no-WebGL fallback preserves the full model", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type: string, ...args: unknown[]) {
+      if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") return null;
+      return original.call(this, type as never, ...args as never);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  await page.goto("/signal-engine");
+  const fallback = page.getByRole("img", { name: /Signal Engine fallback/ });
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toContainText("SOL price");
+  await expect(fallback).toContainText("Perp funding");
+  await expect(fallback).toContainText("Position P&L");
+  await expect(fallback).toContainText("SELL 25% SOL");
+  await page.getByRole("button", { name: "RUN CONVERGENCE" }).click();
+  await expect(fallback).toContainText("FILLED ONCE", { timeout: 8_000 });
+});
