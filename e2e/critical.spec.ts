@@ -381,7 +381,7 @@ test("Discover explains, replays, and hands off a supported strategy without arm
 
   await page.getByRole("button", { name: /Downside Break/i }).click();
   await expect(preview.getByRole("heading", { name: "Downside Break" })).toBeVisible();
-  await expect(preview.getByText("SELL SOL", { exact: true })).toBeVisible();
+  await expect(preview.locator(".strategy-feature-copy").getByText("SELL SOL", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "Advanced" }).click();
   const advanced = page.locator(".advanced-boundary");
@@ -416,8 +416,16 @@ test("Discover remains composed on a phone", async ({ page }, testInfo) => {
   await page.goto("/discover");
   await expect(page.getByRole("heading", { name: "Start with a moment worth watching" })).toBeVisible();
   await expect(page.locator("#strategy-preview").getByRole("heading", { name: "Buy the Fear" })).toBeVisible();
+  await expect(page.locator(".strategy-lattice-mobile")).toBeVisible();
+  await expect(page.locator(".strategy-lattice-desktop")).toBeHidden();
+  await expect(page.locator(".mobile-lattice-signal")).toHaveCount(3);
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
+  const mobileSignalsFit = await page.locator(".mobile-lattice-signal").evaluateAll((signals) => signals.every((signal) => {
+    const box = signal.getBoundingClientRect();
+    return box.left >= 0 && box.right <= window.innerWidth;
+  }));
+  expect(mobileSignalsFit).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("discover-editorial-mobile.png"), fullPage: true });
 });
 
