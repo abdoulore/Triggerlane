@@ -1,11 +1,11 @@
 # Triggerlane Rialo Adapter Boundary
 
-Triggerlane implements the Rialo integration only as far as verified access permits. Every validated Composer draft compiles into the same versioned execution intent consumed by Sandbox target checks. The current internal schema is named `GhostIR` v1 for compatibility with the original codebase; that legacy identifier is not a claim about the current product brand.
+Triggerlane implements the Rialo integration only as far as verified access permits. Every validated Composer draft compiles into the same versioned execution intent consumed by the Simulation target checks. The current internal schema is named `GhostIR` v1 for compatibility with the original codebase; that legacy identifier is not a claim about the current product brand.
 
 ## Current Architecture
 
 ```text
-Demo or monitoring data -> Trigger configuration -> GhostIR v1 -> Sandbox adapter -> Sandbox ledger
+Demo or monitoring data -> Trigger configuration -> GhostIR v1 -> Simulation (internal Sandbox adapter) -> virtual ledger
                                                           |
                                                           -> Rialo adapter -> NOT_CONFIGURED
 ```
@@ -19,7 +19,7 @@ Compilation returns all unsupported requirements in one structured report. It ne
 - `GhostIR` v1 schema and deterministic compiler
 - complete-frame, one-shot, expiry, exact-unit, and slippage semantics
 - target capability matrices
-- Sandbox and Rialo automation adapter boundaries
+- Simulation and Rialo automation adapter boundaries
 - authenticated target and compiler-preview APIs
 - Composer contract inspector
 - conformance tests for units, operators, expiration, one-shot behavior, and unsupported-capability reporting

@@ -60,7 +60,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   async function requireSession(request: FastifyRequest): Promise<void> {
     const token = readSessionToken(request);
     const session = await service.resolveSession(token);
-    if (!session || !token) throw new AppError("UNAUTHORIZED", "Start a Sandbox session first.", 401);
+    if (!session || !token) throw new AppError("UNAUTHORIZED", "Start a Simulation session first.", 401);
     request.userId = session.userId;
     request.sessionToken = token;
   }
@@ -98,7 +98,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
       return reply.status(error.statusCode).send({ error: { code: error.code, message: error.message } });
     }
     app.log.error(error);
-    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "The Sandbox could not complete that action." } });
+    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "The Simulation could not complete that action." } });
   });
 
   app.get("/health", async () => ({ ok: true, service: "ghost-api", database: "pglite-postgres" }));

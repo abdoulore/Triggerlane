@@ -9,5 +9,5 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 export function SandboxDisclaimer() {
-  return <aside className="sandbox-disclaimer" aria-label="Sandbox execution disclaimer">Triggerlane Sandbox uses simulated capital and simulated execution. Market data may be live, but no real assets are moved.</aside>;
+  return <aside className="sandbox-disclaimer" aria-label="Simulation execution disclaimer">Simulation uses virtual funds and simulated execution. Live market data may be shown, but no real assets move.</aside>;
 }

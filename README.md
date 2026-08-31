@@ -2,7 +2,7 @@
 
 **Set the signals. Enter when they align.**
 
-Triggerlane is a conditional trading sandbox for building one-shot SOL/USDC orders from complete market states. A trigger can wait for price, funding, position profit, or any supported combination before it reserves simulated capital and executes exactly once.
+Triggerlane is a conditional trading simulation for building one-shot SOL/USDC orders from complete market states. A trigger can wait for price, funding, position profit, or any supported combination before it reserves virtual capital and executes exactly once.
 
 > [!IMPORTANT]
 > Triggerlane currently uses simulated capital and simulated execution. Live market data is monitoring-only. No real assets move, and the Rialo execution target is not configured.
@@ -16,11 +16,11 @@ Traditional limit orders watch one price. Triggerlane lets a trader describe a f
 - sell when SOL reaches a target and funding is elevated;
 - buy only when a selected group of signals agrees;
 - use one condition when that is all the strategy needs;
-- reserve the intended sandbox capital before execution;
+- reserve the intended virtual capital before execution;
 - inspect why a trigger is waiting, blocked, filled, cancelled, or expired;
 - prove a simulated fill with its source frame, quote, reservation, and ledger receipt.
 
-The current build is intentionally narrow: one market, a small qualified signal set, deterministic sandbox settlement, and a visible boundary around everything that is not available.
+The current build is intentionally narrow: one market, a small qualified signal set, deterministic simulated settlement, and a visible boundary around everything that is not available.
 
 ## Product Tour
 
@@ -33,7 +33,7 @@ The current build is intentionally narrow: one market, a small qualified signal 
 - **Trade:** compose a trigger with one to three active conditions and preview its capital commitment.
 - **Triggers:** scan active, paused, draft, and completed intents by readiness, action, capital, and deadline.
 - **Trigger detail:** inspect the current condition frame, lifecycle, exact observations, activity, and receipt.
-- **Portfolio:** reconcile available and reserved sandbox balances against an immutable local ledger.
+- **Portfolio:** reconcile available and reserved virtual balances against an immutable local ledger.
 - **History:** review fills, blocked attempts, cancellations, expirations, and their evidence.
 - **Discover:** load supported strategy examples into an editable composer.
 - **Replay:** test the same trigger against deterministic 24-hour, 7-day, or 30-day demo history.
@@ -87,7 +87,7 @@ PGlite persistence
   executions, activities, outbox, and double-entry ledger
 
 Execution adapters
-  Sandbox -> configured and executable with simulated capital
+  Simulation -> configured and executable with virtual capital
   Rialo   -> explicit NOT_CONFIGURED capability boundary
 ```
 

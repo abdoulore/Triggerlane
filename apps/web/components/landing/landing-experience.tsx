@@ -10,7 +10,7 @@ const steps = [
   ["Watching market state", "The trigger observes a complete Demo Feed frame."],
   ["Capital reserved", "25% of the SOL position is committed before execution."],
   ["Conditions aligned", "Price, funding, and portfolio P&L qualify together."],
-  ["Execution settled", "A deterministic Sandbox quote fills once."],
+  ["Execution settled", "A deterministic simulated quote fills once."],
   ["Receipt generated", "The observations, quote, and ledger movement are recorded."],
 ] as const;
 
@@ -31,8 +31,8 @@ export function LandingExperience() {
   return <main className="landing-page">
     <header className="landing-nav">
       <Link href="/" className="landing-brand" aria-label="Triggerlane home"><Path weight="duotone" size={20} /> TRIGGERLANE</Link>
-      <span>TRIGGERLANE SANDBOX · SIMULATED EXECUTION</span>
-      <Link href="/trade" className="nav-entry">ENTER SANDBOX <ArrowRight size={14} /></Link>
+      <span>TRIGGERLANE SIMULATION · VIRTUAL FUNDS</span>
+      <Link href="/trade" className="nav-entry">TRY TRIGGERLANE <ArrowRight size={14} /></Link>
     </header>
 
     <section className="landing-hero" aria-labelledby="landing-title">
@@ -43,19 +43,19 @@ export function LandingExperience() {
     </section>
 
     <section id="guided-cycle" className="landing-section cycle-section">
-      <div className="section-heading"><span className="landing-kicker">ONE INTENT · FIVE PROVABLE STATES</span><h2>Watch the order think before it acts.</h2><p>This deterministic demonstration uses the same Demo Feed sequence as the Sandbox terminal.</p></div>
+      <div className="section-heading"><span className="landing-kicker">ONE INTENT · FIVE PROVABLE STATES</span><h2>Watch the order think before it acts.</h2><p>This deterministic demonstration uses the same Demo Feed sequence as the live Simulation.</p></div>
       <div className="cycle-layout">
         <div className="cycle-command"><span className="cycle-index">0{stage + 1} / 05</span><div className="cycle-state"><i className={stage === 4 ? "settled" : "watching"} /><span>{currentStep[0]}</span></div><h3>{stage < 3 ? "A complete market state is forming." : stage === 3 ? "The trigger crosses the execution boundary." : "One fill. One receipt. No ambiguity."}</h3><p>{currentStep[1]}</p><div className="cycle-controls"><button type="button" onClick={() => { setStage(0); setRunning(true); }}><Play weight="fill" size={14} /> {stage === 4 ? "RUN AGAIN" : running ? "RUNNING" : "RUN CYCLE"}</button><button type="button" aria-label="Advance demonstration one step" onClick={() => { setRunning(false); setStage((value) => Math.min(4, value + 1)); }} disabled={stage === 4}><ArrowRight size={15} /></button></div></div>
         <ol className="cycle-timeline">{steps.map((step, index) => <li key={step[0]} className={index <= stage ? "reached" : ""}><i>{index < stage || stage === 4 ? <Check size={12} weight="bold" /> : index + 1}</i><div><b>{step[0]}</b><span>{step[1]}</span></div></li>)}</ol>
-        <aside className={`landing-receipt ${stage === 4 ? "visible" : ""}`} aria-live="polite"><span>EXECUTION RECEIPT</span><ShieldCheck size={30} weight="duotone" /><strong>SELL 25% SOL</strong><small>FILLED AT $284.14 · 16 BPS</small><dl><div><dt>FRAME</dt><dd>DEMO-005</dd></div><div><dt>CAPITAL</dt><dd>4.875 SOL</dd></div><div><dt>MODE</dt><dd>SANDBOX</dd></div></dl></aside>
+        <aside className={`landing-receipt ${stage === 4 ? "visible" : ""}`} aria-live="polite"><span>EXECUTION RECEIPT</span><ShieldCheck size={30} weight="duotone" /><strong>SELL 25% SOL</strong><small>FILLED AT $284.14 · 16 BPS</small><dl><div><dt>FRAME</dt><dd>DEMO-005</dd></div><div><dt>CAPITAL</dt><dd>4.875 SOL</dd></div><div><dt>MODE</dt><dd>SIMULATION</dd></div></dl></aside>
       </div>
     </section>
 
     <section className="landing-section comparison-section"><div className="section-heading"><span className="landing-kicker">WHY TRIGGERLANE</span><h2>Price alone is not the moment.</h2></div><div className="comparison-grid"><article><span>TRADITIONAL ORDER</span><h3>“Sell SOL at $280.”</h3><p>Sees one number. It cannot distinguish healthy momentum from a crowded, overheated market.</p><div className="single-signal"><i /><b>PRICE ≥ $280</b><ArrowRight size={16} /><strong>EXECUTE</strong></div></article><article className="ghost-comparison"><span>TRIGGERLANE ORDER</span><h3>“Sell when the full state agrees.”</h3><p>Waits for price, funding, and position profit to qualify in one complete observation frame.</p><div className="triple-signal"><b>PRICE</b><b>FUNDING</b><b>P&amp;L</b><ArrowRight size={16} /><strong>EXECUTE ONCE</strong></div></article></div></section>
 
-    <section className="landing-section examples-section"><div className="section-heading"><span className="landing-kicker">SUPPORTED TRIGGERS</span><h2>Real configurations. No imaginary features.</h2><p>Every example validates against the current Composer and opens as an editable Sandbox intent.</p></div><div className="landing-strategies">{STRATEGY_TEMPLATES.slice(0, 3).map((strategy, index) => <Link key={strategy.id} href={`/trade?strategy=${strategy.id}`}><span>0{index + 1} · {strategy.category.toUpperCase()}</span><h3>{strategy.name}</h3><p>{strategy.description}</p><div>{strategy.metrics.map((metric) => <b key={metric}>{metric}</b>)}<ArrowRight size={16} /></div></Link>)}</div></section>
+    <section className="landing-section examples-section"><div className="section-heading"><span className="landing-kicker">SUPPORTED TRIGGERS</span><h2>Real configurations. No imaginary features.</h2><p>Every example validates against the current Composer and opens as an editable simulation draft.</p></div><div className="landing-strategies">{STRATEGY_TEMPLATES.slice(0, 3).map((strategy, index) => <Link key={strategy.id} href={`/trade?strategy=${strategy.id}`}><span>0{index + 1} · {strategy.category.toUpperCase()}</span><h3>{strategy.name}</h3><p>{strategy.description}</p><div>{strategy.metrics.map((metric) => <b key={metric}>{metric}</b>)}<ArrowRight size={16} /></div></Link>)}</div></section>
 
-    <section className="landing-section architecture-section"><div><span className="landing-kicker">EXECUTION ARCHITECTURE</span><h2>Working now. Honest about what comes next.</h2></div><div className="architecture-path"><article><i className="active" /><span>CURRENT</span><h3>Triggerlane Sandbox</h3><p>Deterministic Demo Feed, simulated capital reservation, simulated quotes, immutable local receipts.</p><b>AVAILABLE</b></article><ArrowRight size={24} /><article className="future"><i /><span>TARGET</span><h3>Rialo execution</h3><p>Future reactive execution target. No network access or deployment is claimed in this build.</p><b>NOT CONFIGURED</b></article></div></section>
+    <section className="landing-section architecture-section"><div><span className="landing-kicker">EXECUTION ARCHITECTURE</span><h2>Working now. Honest about what comes next.</h2></div><div className="architecture-path"><article><i className="active" /><span>CURRENT</span><h3>Triggerlane Simulation</h3><p>Deterministic Demo Feed, virtual fund reservation, simulated quotes, immutable local receipts.</p><b>AVAILABLE</b></article><ArrowRight size={24} /><article className="future"><i /><span>TARGET</span><h3>Rialo execution</h3><p>Future reactive execution target. No network access or deployment is claimed in this build.</p><b>NOT CONFIGURED</b></article></div></section>
     <section className="landing-final"><Clock size={24} weight="duotone" /><span>YOUR ORDER CAN WAIT.</span><h2>You should not have to.</h2><Link href="/trade">ENTER TRIGGERLANE <ArrowRight size={17} /></Link><small>SIMULATED CAPITAL · SIMULATED EXECUTION · NO REAL ASSETS MOVED</small></section>
   </main>;
 }

@@ -2,7 +2,7 @@
 
 ## Supported Version
 
-Security fixes are applied to the latest code on the default branch. This project is currently a pre-release sandbox and does not maintain parallel supported release lines.
+Security fixes are applied to the latest code on the default branch. This project is currently a pre-release simulation and does not maintain parallel supported release lines.
 
 ## Reporting a Vulnerability
 
@@ -20,7 +20,7 @@ Reports will be reviewed on a best-effort basis. There is currently no paid bug-
 
 ## Security Boundary
 
-Triggerlane is a simulated trading sandbox. It is not approved for custody, real trading, or production financial activity. Do not provide it with:
+Triggerlane is a trading simulation. It is not approved for custody, real trading, or production financial activity. Do not provide it with:
 
 - private keys or seed phrases;
 - exchange or brokerage credentials;
@@ -28,7 +28,7 @@ Triggerlane is a simulated trading sandbox. It is not approved for custody, real
 - production customer data;
 - secrets copied from another environment.
 
-Live market data is monitoring-only, sandbox balances have no monetary value, and the Rialo adapter is not configured for network execution.
+Live market data is monitoring-only, virtual balances have no monetary value, and the Rialo adapter is not configured for network execution.
 
 ## Deployment Guidance
 

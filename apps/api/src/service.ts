@@ -160,7 +160,7 @@ export class GhostService {
 
   executionTargets() {
     return {
-      architecture: { current: "Live data -> GhostIR -> Sandbox", target: "Live data -> GhostIR -> Rialo reactive execution" },
+      architecture: { current: "Live data -> GhostIR -> Simulation", target: "Live data -> GhostIR -> Rialo reactive execution" },
       targets: this.executionAdapters.map((adapter) => adapter.capabilities),
     };
   }
@@ -208,7 +208,7 @@ export class GhostService {
         "INSERT INTO ledger_entries (id, transaction_id, portfolio_id, asset, amount_decimal, cost_basis_delta_usdc_decimal, unit_price_usdc_decimal, type, created_at) VALUES ($1, $2, $3, 'USDC', 15000, NULL, 1, 'SEED', $4), ($5, $2, $3, 'SOL', 40, 10000, 250, 'SEED', $4)",
         [randomUUID(), ledgerId, portfolioId, createdAt, randomUUID()],
       );
-      await this.addActivity(tx, userId, null, "SANDBOX_READY", "Sandbox funded with 15,000 USDC and 40 SOL.", {
+      await this.addActivity(tx, userId, null, "SANDBOX_READY", "Simulation funded with 15,000 virtual USDC and 40 virtual SOL.", {
         portfolioId,
       });
       await this.createDemoFrame(tx, { id: portfolioId, user_id: userId, data_mode: "DEMO", demo_step: 0, version: 1, generation: 1 }, 0);
@@ -239,7 +239,7 @@ export class GhostService {
       "SELECT id, user_id, data_mode, demo_step, version, generation FROM portfolios WHERE user_id = $1 AND status = 'ACTIVE'",
       [userId],
     );
-    if (!portfolio) throw new AppError("PORTFOLIO_NOT_FOUND", "Sandbox portfolio was not found.", 404);
+    if (!portfolio) throw new AppError("PORTFOLIO_NOT_FOUND", "Simulation portfolio was not found.", 404);
     return portfolio;
   }
 
@@ -313,7 +313,7 @@ export class GhostService {
       await tx.query("INSERT INTO ledger_transactions (id,portfolio_id,type,idempotency_key,created_at) VALUES ($1,$2,'SEED',$3,$4)", [ledgerId, portfolioId, `seed:${portfolioId}`, timestamp]);
       await tx.query("INSERT INTO ledger_entries (id,transaction_id,portfolio_id,asset,amount_decimal,cost_basis_delta_usdc_decimal,unit_price_usdc_decimal,type,created_at) VALUES ($1,$2,$3,'USDC',15000,NULL,1,'SEED_CREDIT',$4),($5,$2,$3,'SOL',40,10000,250,'SEED_CREDIT',$4)", [randomUUID(), ledgerId, portfolioId, timestamp, randomUUID()]);
       await tx.query("INSERT INTO idempotency_records (user_id,operation,idempotency_key,resource_id,created_at) VALUES ($1,'RESET_PORTFOLIO',$2,$3,$4)", [userId, idempotencyKey, portfolioId, timestamp]);
-      await this.addActivity(tx, userId, null, "SANDBOX_RESET", "Sandbox portfolio reset to its seeded state.", { portfolioId, generation: current.generation + 1 });
+      await this.addActivity(tx, userId, null, "SANDBOX_RESET", "Simulation portfolio reset to its seeded state.", { portfolioId, generation: current.generation + 1 });
     });
     return this.workspace(userId);
   }
@@ -592,7 +592,7 @@ export class GhostService {
     );
 
     return {
-      identity: { id: userId, label: `Sandbox ${userId.slice(0, 4).toUpperCase()}` },
+      identity: { id: userId, label: `Simulation ${userId.slice(0, 4).toUpperCase()}` },
       portfolio: {
         id: portfolio.id,
         dataMode: portfolio.data_mode,
@@ -1143,7 +1143,7 @@ export class GhostService {
 
     await db.query("UPDATE execution_attempts SET status = 'SETTLING', updated_at = NOW() WHERE id = $1", [attemptId]);
     await db.query("UPDATE ghosts SET status = 'EXECUTING', updated_at = NOW() WHERE id = $1", [ghost.id]);
-    await this.addActivity(db, userId, ghost.id, "EXECUTION_STARTED", "Sandbox settlement started.", { quote });
+    await this.addActivity(db, userId, ghost.id, "EXECUTION_STARTED", "Simulated settlement started.", { quote });
 
     const executionId = randomUUID();
     const ledgerTransactionId = randomUUID();

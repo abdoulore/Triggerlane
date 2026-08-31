@@ -4,7 +4,7 @@ import AxeBuilder from "@axe-core/playwright";
 const productPages = [
   { path: "/trade", heading: /^SOL \/ USDC$/ },
   { path: "/ghosts", heading: "Your triggers" },
-  { path: "/portfolio", heading: "Your sandbox portfolio" },
+  { path: "/portfolio", heading: "Your virtual portfolio" },
   { path: "/history", heading: "Trigger history" },
   { path: "/discover", heading: "Start with a moment worth watching" },
 ] as const;
@@ -128,7 +128,7 @@ test("loading, error, empty, unavailable, and terminal explanations stay explici
 
   await page.route("**/api/workspace", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "AUDIT_FAILURE", message: "Launch audit outage" } }) }));
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: "Sandbox unavailable" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Simulation unavailable" })).toBeVisible();
   await expect(page.getByText("No capital was moved.")).toBeVisible();
   await page.unroute("**/api/workspace");
 

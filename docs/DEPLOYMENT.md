@@ -47,7 +47,7 @@ Keep the service at one replica while it uses PGlite. Moving to multiple replica
 ## First Deployment Check
 
 1. Open `/health/ready` and confirm the database reports `ready`.
-2. Open the landing page and start an anonymous Sandbox session.
+2. Open the landing page and start an anonymous Simulation session.
 3. Create and start a one-condition trigger.
 4. Advance Demo Feed until it fills and inspect its receipt.
 5. Run Replay and open Portfolio and History.

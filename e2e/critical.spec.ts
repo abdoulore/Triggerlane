@@ -62,7 +62,7 @@ async function seedGhostCommandCenter(page: Page) {
 
 async function seedPortfolio(page: Page) {
   await page.goto("/portfolio");
-  await expect(page.getByRole("heading", { name: "Your sandbox portfolio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your virtual portfolio" })).toBeVisible();
   await page.evaluate(async () => {
     const base = "http://127.0.0.1:8787";
     const call = async (path: string, body?: unknown) => {
@@ -117,7 +117,7 @@ async function seedHistoryAudit(page: Page) {
 test("landing teaches and renders a real 3D Ghost cycle", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "TRIGGERLANE", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /ENTER SANDBOX/ }).first()).toHaveAttribute("href", "/trade");
+  await expect(page.getByRole("link", { name: /TRY TRIGGERLANE/ }).first()).toHaveAttribute("href", "/trade");
   const canvas = page.locator('canvas[data-scene="condition-lattice"]');
   await expect(canvas).toBeVisible();
   const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
@@ -191,7 +191,7 @@ test("Ghost Detail renders a real data-driven 3D core and truthful lifecycle", a
   await openWatchingGhostDetail(page);
   await expect(page.getByRole("heading", { name: /parts of the moment|has not reached|whole moment/i })).toBeVisible();
   await expect(page.getByRole("table", { name: "Exact condition observations" }).getByRole("row")).toHaveCount(1);
-  await expect(page.getByText("Triggerlane Sandbox", { exact: true })).toBeVisible();
+  await expect(page.getByText("Triggerlane Simulation", { exact: true })).toBeVisible();
 
   const canvas = page.locator('canvas[data-scene="ghost-core"]');
   await expect(canvas).toBeVisible();
@@ -252,7 +252,7 @@ test("Ghost Detail has a complete no-WebGL fallback", async ({ page }) => {
 
 test("Live Data visibly refuses execution", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "LIVE", exact: true }).click();
+  await page.getByRole("button", { name: "LIVE DATA", exact: true }).click();
   await expect(page.getByText("LIVE DATA · MONITORING ONLY")).toBeVisible();
   await expect(page.getByRole("button", { name: "ADVANCE FEED" })).toBeDisabled();
 });
@@ -596,7 +596,7 @@ test("Portfolio reconciles capital, reservations, previews, and ledger sources",
   await page.getByTitle("Inspect Portfolio Guard").click();
   await expect(page).toHaveURL(/\/ghost\/[a-f0-9-]+$/);
   await page.goBack();
-  await expect(page.getByRole("heading", { name: "Your sandbox portfolio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your virtual portfolio" })).toBeVisible();
   await expect(page.getByText("LEDGER RECONCILED")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("portfolio-desktop.png"), fullPage: true });
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
@@ -641,13 +641,13 @@ test("AI Composer requires review before applying a structured Ghost", async ({ 
 
 test("connection drawer reports real system capability and closes with Escape", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "DEMO EXECUTION" }).click();
+  await page.getByRole("button", { name: "SIMULATED EXECUTION" }).click();
   const drawer = page.getByRole("dialog", { name: "Connections" });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText("PRICE FEED")).toBeVisible();
   await expect(drawer.getByText("FUNDING FEED")).toBeVisible();
   await expect(drawer.getByText("TRIGGER ENGINE")).toBeVisible();
-  await expect(drawer.getByText("SANDBOX EXECUTION")).toBeVisible();
+  await expect(drawer.getByText("SIMULATED EXECUTION")).toBeVisible();
   await expect(drawer.getByText("Rialo remains unavailable and is not reported as connected.")).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page }).include(".connection-drawer").withTags(["wcag2a", "wcag2aa"]).analyze();
