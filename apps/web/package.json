@@ -1,0 +1,32 @@
+{
+  "name": "@ghost/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 5173",
+    "start": "next start -H 0.0.0.0",
+    "build": "next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ghost/domain": "0.1.0",
+    "@phosphor-icons/react": "latest",
+    "@tanstack/react-query": "latest",
+    "@types/three": "^0.185.4",
+    "geist": "^1.7.2",
+    "lightweight-charts": "latest",
+    "motion": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest"
+  }
+}

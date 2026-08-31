@@ -1,0 +1,26 @@
+{
+  "name": "ghost-orders",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,white \"npm run dev -w @ghost/api\" \"npm run dev -w @ghost/web\"",
+    "start": "concurrently --kill-others-on-fail -n api,web -c cyan,white \"npm run start -w @ghost/api\" \"npm run start -w @ghost/web\"",
+    "build": "npm run build -w @ghost/domain && npm run build -w @ghost/api && npm run build -w @ghost/web",
+    "test": "npm run test -w @ghost/domain && npm run test -w @ghost/api",
+    "test:e2e": "playwright test",
+    "test:launch": "playwright test e2e/launch-hardening.spec.ts",
+    "check:budget": "node scripts/check-build-budget.mjs",
+    "check:launch": "npm run test && npm run typecheck && npm run build && npm run check:budget && npm run test:e2e",
+    "typecheck": "npm run typecheck -w @ghost/domain && npm run typecheck -w @ghost/api && npm run typecheck -w @ghost/web"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
+    "concurrently": "latest",
+    "typescript": "latest"
+  }
+}

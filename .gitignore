@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Framework and build output
+.next/
+.next-backup-*/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+
+# Local runtime state
+.data/
+
+# Internal product planning and audit records
+docs/archive/
+docs/POST_MVP_VISUAL_ROADMAP.md
+docs/LAUNCH_AUDIT.md
+
+# Environment files (keep the committed template)
+.env
+.env.*
+!.env.example
+
+# Test and browser artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local tools and operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Temporary and backup files
+*.bak
+*.tmp
+*.swp
+*~
