@@ -140,7 +140,8 @@ test("loading, error, empty, unavailable, and terminal explanations stay explici
   await page.getByRole("tab", { name: "Advanced" }).click();
   await expect(page.getByText("LIQUIDITY · UNSUPPORTED")).toBeVisible();
   await page.goto("/history");
-  await expect(page.getByRole("heading", { name: "No outcomes have been recorded" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No outcomes yet" })).toBeVisible();
+  await expect(page.getByText("Every result will keep its evidence here.")).toBeVisible();
 });
 
 test("first-time comprehension and honesty gate covers the ten product questions", async ({ page }) => {

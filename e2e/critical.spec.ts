@@ -83,7 +83,7 @@ async function seedPortfolio(page: Page) {
     await call(`/api/ghosts/${watching.id}/arm`);
   });
   await page.reload();
-  await expect(page.getByText("Portfolio Guard", { exact: true })).toBeVisible();
+  await expect(page.locator(".reservation-row").filter({ hasText: "Portfolio Guard" })).toBeVisible();
 }
 
 async function seedHistoryAudit(page: Page) {
@@ -499,6 +499,11 @@ test("Ghosts and History keep the welcoming reading hierarchy", async ({ page })
 test("History distinguishes settlements, blocked attempts, and stopped Ghosts", async ({ page }, testInfo) => {
   await seedHistoryAudit(page);
   await expect(page.locator(".history-audit-row")).toHaveCount(3);
+  await expect(page.locator(".history-audit-row").filter({ hasText: "Settled Audit" })).toContainText("Trade settled and balances changed");
+  await expect(page.locator(".history-audit-row").filter({ hasText: "Blocked Audit" })).toContainText("Execution prevented; capital restored");
+  await expect(page.locator(".history-audit-row").filter({ hasText: "Cancelled Audit" })).toContainText("Stopped before execution");
+  await expect(page.locator(".history-audit-row").first()).toHaveAttribute("aria-haspopup", "dialog");
+  await expect(page.locator(".outcome-proof")).toHaveCount(3);
   await expect(page.locator(".history-summary").getByRole("button", { name: /FILLED 1/ })).toBeVisible();
   await expect(page.locator(".history-summary").getByRole("button", { name: /BLOCKED 1/ })).toBeVisible();
   await expect(page.locator(".history-summary").getByRole("button", { name: /CANCELLED 1/ })).toBeVisible();
@@ -554,6 +559,12 @@ test("History distinguishes settlements, blocked attempts, and stopped Ghosts", 
 test("History audit records remain usable on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedHistoryAudit(page);
+  const outcome = page.locator(".history-audit-row").filter({ hasText: "Blocked Audit" });
+  await outcome.scrollIntoViewIfNeeded();
+  await expect(outcome.locator(".outcome-capital")).toBeVisible();
+  await expect(outcome.locator(".outcome-proof")).toBeVisible();
+  await expect(outcome.getByText("VIEW ATTEMPT", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("history-outcome-mobile.png"), fullPage: false });
   await page.getByRole("button", { name: /Blocked Audit/ }).click();
   await expect(page.getByText("Conditions qualified. Settlement was prevented.")).toBeVisible();
   await page.waitForTimeout(300);
@@ -646,11 +657,22 @@ test("Portfolio reconciles capital, reservations, previews, and ledger sources",
   await seedPortfolio(page);
   await expect(page.getByText("LEDGER RECONCILED")).toBeVisible();
   await expect(page.getByText("EXACT MATCH")).toBeVisible();
+  const equation = page.getByLabel("Capital reconciliation equation");
+  await expect(equation).toBeVisible();
+  const equationValues = await equation.locator("b").allTextContents();
+  const parsedEquation = equationValues.map((value) => Number(value.replace(/[$,]/g, "")));
+  expect(parsedEquation[0]! + parsedEquation[1]!).toBeCloseTo(parsedEquation[2]!, 2);
   await expect(page.getByRole("heading", { name: "Where every simulated dollar sits" })).toBeVisible();
   const reservation = page.locator(".reservation-row").filter({ hasText: "Portfolio Guard" });
   await expect(reservation).toContainText("CONTROLLED NOW");
   await expect(reservation).toContainText("IF IT EXECUTED NOW");
+  await expect(reservation.getByLabel("Portfolio Guard reservation ownership")).toContainText("SIMULATED PORTFOLIO");
+  await reservation.locator(".reservation-trace summary").click();
+  await expect(reservation.locator(".reservation-trace")).toContainText("Reservation ID");
+  await expect(reservation.locator(".reservation-trace")).toContainText("Owner trigger");
   await expect(page.locator(".ledger-row")).toHaveCount(2);
+  await page.locator(".ledger-row").filter({ hasText: "Portfolio Rebalance" }).locator(".ledger-trace summary").click();
+  await expect(page.locator(".ledger-row").filter({ hasText: "Portfolio Rebalance" }).locator(".ledger-trace")).toContainText("Execution record");
   await expect(page.getByText("Portfolio Rebalance", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "SOL", exact: true }).click();
   await expect(page.locator(".ledger-row")).toHaveCount(2);
@@ -671,10 +693,15 @@ test("Portfolio preserves capital hierarchy without mobile overflow", async ({ p
   await page.setViewportSize({ width: 390, height: 844 });
   await seedPortfolio(page);
   await expect(page.getByText("TOTAL SIMULATED EQUITY")).toBeVisible();
+  await expect(page.getByLabel("Capital reconciliation equation")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Mobile navigation" }).getByText("Portfolio", { exact: true })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
   await page.screenshot({ path: testInfo.outputPath("portfolio-mobile.png"), fullPage: false });
+  const reservation = page.locator(".reservation-row").filter({ hasText: "Portfolio Guard" });
+  await reservation.scrollIntoViewIfNeeded();
+  await expect(reservation.getByLabel("Portfolio Guard reservation ownership")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("portfolio-reservation-mobile.png"), fullPage: false });
 });
 
 test("AI Composer requires review before applying a structured Ghost", async ({ page }) => {
