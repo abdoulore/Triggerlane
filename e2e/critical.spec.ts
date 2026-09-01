@@ -141,8 +141,13 @@ test("landing teaches the product through the real 3D Signal Engine", async ({ p
   await expect(page.getByText("FILLED ONCE", { exact: true }).first()).toBeVisible({ timeout: 9_000 });
   await page.getByRole("link", { name: "SEE HOW IT WORKS" }).click();
   await expect(page.getByRole("heading", { name: "Conditional trading in three human steps." })).toBeVisible();
+  await page.getByRole("tab", { name: /Choose your moment/ }).click();
+  await expect(page.getByText("Use one signal for a simple trigger, or combine signals when context matters.")).toBeVisible();
+  const guideHeight = await page.locator(".guide-panel").evaluate((element) => element.getBoundingClientRect().height);
   await page.getByRole("tab", { name: /Get one clear result/ }).click();
   await expect(page.getByText("FILLED ONCE, RECEIPT STORED")).toBeVisible();
+  await expect(page.locator(".guide-active-indicator")).toBeVisible();
+  expect(Math.abs(await page.locator(".guide-panel").evaluate((element) => element.getBoundingClientRect().height) - guideHeight)).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath("landing-desktop.png"), fullPage: false });
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
