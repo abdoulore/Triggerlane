@@ -1569,3 +1569,170 @@ body { font-size: 14px; }
   .boundary-note { align-items: flex-start; font-size: 12px; line-height: 1.5; }
   .signal-engine-fallback-landing { inset: 62px 0 190px; padding-top: 300px; }
 }
+
+/* Phase 25: Trade hierarchy, compact Signal Engine, and focused Composer. */
+.phase-25-trade { grid-template-columns: 230px minmax(560px, 1fr) 420px; }
+.phase-25-trade .market-header { min-height: 92px; grid-template-columns: minmax(220px, 1fr) auto minmax(155px, auto); padding-inline: 26px; }
+.phase-25-trade .market-title h1 { font-size: 24px; }
+.phase-25-trade .asset-emblem { width: 42px; height: 42px; font-size: 17px; }
+.phase-25-trade .market-price { min-width: 154px; }
+.phase-25-trade .market-price > span { margin: 0 0 7px; color: var(--muted); font: 10px var(--font-geist-mono); }
+.phase-25-trade .market-price strong { font-size: 31px; line-height: 1; }
+.phase-25-trade .market-price small { margin-top: 7px; font: 10px var(--font-geist-mono); }
+.phase-25-trade .execution-mode { min-width: 155px; }
+.phase-25-trade .execution-mode span, .phase-25-trade .execution-mode b { font-size: 10px; }
+.phase-25-trade .signal-ribbon { min-height: 76px; }
+.phase-25-trade .signal-ribbon > div { padding: 11px 15px; }
+.phase-25-trade .signal-ribbon span, .phase-25-trade .signal-ribbon small { font-size: 10px; }
+.phase-25-trade .signal-ribbon b { font-size: 14px; }
+.phase-25-trade .chart-zone { height: clamp(350px, 43vh, 520px); }
+.phase-25-trade .watch-zone { padding: 22px 22px 18px; }
+.phase-25-trade .watch-heading { margin-bottom: 16px; }
+.phase-25-trade .watch-heading h2 { font-size: 20px; }
+.phase-25-trade .waiting-reason { max-width: 620px; margin-top: 9px; font-size: 13px; line-height: 1.45; }
+.phase-25-trade .readiness span { font-size: 10px; }
+.phase-25-trade .readiness strong { font-size: 26px; }
+
+.compact-signal-engine { margin-bottom: 10px; border: 1px solid var(--line-strong); background: #0a0e0d; }
+.compact-signal-engine > header { min-height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--line); }
+.compact-signal-engine > header span, .compact-signal-engine > header b { font: 9px var(--font-geist-mono); }
+.compact-signal-engine > header span { color: var(--muted); }
+.compact-signal-engine > header b { color: var(--amber); }
+.compact-signal-engine.ready > header b { color: var(--accent); }
+.compact-engine-flow { min-height: 88px; display: grid; grid-template-columns: minmax(190px, 1fr) 74px 20px minmax(145px, .7fr); align-items: stretch; gap: 10px; padding: 10px; }
+.compact-engine-signals { min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); border: 1px solid var(--line); }
+.compact-engine-signals > div { min-width: 0; display: grid; grid-template-columns: 24px 1fr; align-items: center; gap: 8px; padding: 9px; border-right: 1px solid var(--line); }
+.compact-engine-signals > div:last-child { border-right: 0; }
+.compact-engine-signals i { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 50%; font: 8px var(--font-geist-mono); font-style: normal; }
+.compact-engine-signals span, .compact-engine-signals b, .compact-engine-signals small { min-width: 0; display: block; }
+.compact-engine-signals b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.compact-engine-signals small { margin-top: 5px; color: var(--muted); font: 8px var(--font-geist-mono); }
+.compact-engine-signals > div.ready i { color: #06100d; background: var(--accent); border-color: var(--accent); }
+.compact-engine-signals > div.ready small { color: var(--accent); }
+.compact-engine-core { display: grid; place-items: center; align-content: center; gap: 7px; }
+.compact-engine-core i { width: 34px; height: 34px; border: 1px solid var(--line-strong); border-radius: 50%; box-shadow: inset 0 0 18px rgba(112,242,204,.04); }
+.compact-signal-engine.ready .compact-engine-core i { background: rgba(112,242,204,.12); border-color: var(--accent); box-shadow: 0 0 0 7px rgba(112,242,204,.05), inset 0 0 18px rgba(112,242,204,.1); }
+.compact-engine-core small { color: var(--muted); font: 7px/1.35 var(--font-geist-mono); text-align: center; }
+.compact-engine-flow > svg { align-self: center; color: var(--muted); }
+.compact-signal-engine.ready .compact-engine-flow > svg { color: var(--accent); }
+.compact-engine-action { display: flex; flex-direction: column; justify-content: center; padding: 11px 13px; border-left: 2px solid var(--line-strong); background: #0f1312; }
+.compact-engine-action span, .compact-engine-action small { color: var(--muted); font: 8px var(--font-geist-mono); }
+.compact-engine-action b { margin: 7px 0; font: 13px var(--font-geist-mono); }
+.compact-signal-engine.ready .compact-engine-action { border-left-color: var(--accent); background: #101916; }
+.compact-signal-engine.ready .compact-engine-action span { color: var(--accent); }
+
+.phase-25-trade .condition-strip { gap: 9px; }
+.phase-25-trade .condition-cell { min-height: 126px; padding: 14px; }
+.phase-25-trade .condition-cell-top { font-size: 11px; }
+.phase-25-trade .condition-values { align-items: end; margin: 13px 0; }
+.phase-25-trade .condition-values > div { min-width: 0; }
+.phase-25-trade .condition-values small { display: block; margin-bottom: 6px; color: var(--muted); font: 8px var(--font-geist-mono); }
+.phase-25-trade .metric-value { font-size: 21px; }
+.phase-25-trade .condition-target { text-align: right; }
+.phase-25-trade .condition-target span { display: block; overflow: hidden; color: var(--text); font: 11px var(--font-geist-mono); text-overflow: ellipsis; white-space: nowrap; }
+.phase-25-trade .condition-cell > small { font-size: 9px; }
+
+.phase-25-trade .composer-panel { padding: 24px; }
+.phase-25-trade .panel-heading h2 { font-size: 27px; }
+.phase-25-trade .composer-intro { max-width: 350px; font-size: 15px; }
+.phase-25-trade .composer-modes { min-height: 46px; }
+.phase-25-trade .side-switch { height: 48px; }
+.phase-25-trade .field-label > input, .phase-25-trade .input-with-unit { min-height: 50px; font-size: 15px; }
+.phase-25-trade .condition-builder-heading { margin-top: 24px; font-size: 11px; }
+.phase-25-trade .builder-row { grid-template-columns: 24px minmax(112px, 1fr) 92px 104px; min-height: 74px; gap: 8px; padding: 9px 10px; }
+.phase-25-trade .builder-toggle { width: 22px; height: 22px; }
+.phase-25-trade .builder-toggle span { width: 20px; height: 20px; }
+.phase-25-trade .builder-metric span, .phase-25-trade .builder-metric small { display: block; }
+.phase-25-trade .builder-metric span { font-size: 13px; }
+.phase-25-trade .builder-metric small { margin-top: 6px; color: var(--muted); font: 9px var(--font-geist-mono); }
+.builder-operator, .builder-target-field { min-width: 0; color: var(--muted); font: 8px var(--font-geist-mono); }
+.builder-operator > span, .builder-target-field > span { display: block; margin-bottom: 5px; }
+.phase-25-trade .builder-row select, .phase-25-trade .builder-target { width: 100%; height: 44px; margin: 0; font-size: 12px; }
+.phase-25-trade .builder-target input { font-size: 14px; }
+.phase-25-trade .constraint-row { gap: 10px; margin-top: 15px; }
+.phase-25-trade .constraint-row label { font-size: 12px; }
+.phase-25-trade .compact-input, .phase-25-trade .constraint-row select { min-height: 46px; }
+.phase-25-trade .intent-summary { padding: 14px; }
+.phase-25-trade .intent-summary p { font-size: 13px; }
+.phase-25-trade .commitment-summary { margin-top: 12px; padding: 15px; }
+.phase-25-trade .commitment-summary span, .phase-25-trade .commitment-summary dt { font-size: 10px; }
+.phase-25-trade .commitment-summary b { font-size: 16px; }
+.phase-25-trade .commitment-summary dd { font-size: 13px; }
+.phase-25-trade .commitment-summary p { font-size: 11px; }
+.action-consequence { margin-top: 12px; padding: 14px; border: 1px solid var(--line); background: #0b0e0d; }
+.action-consequence > header { display: flex; align-items: center; gap: 8px; color: var(--accent); font: 10px var(--font-geist-mono); }
+.action-consequence ol { margin: 13px 0 0; padding: 0; list-style: none; }
+.action-consequence li { min-height: 55px; display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 10px; border-top: 1px solid var(--line); }
+.action-consequence li > i { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 50%; font: 9px var(--font-geist-mono); font-style: normal; }
+.action-consequence li span, .action-consequence li b, .action-consequence li small { display: block; }
+.action-consequence li b { font-size: 12px; }
+.action-consequence li small { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.phase-25-trade .primary-action { min-height: 54px; font-size: 13px; }
+
+@media (max-width: 1280px) {
+  .phase-25-trade { grid-template-columns: 190px minmax(520px, 1fr) 390px; }
+  .phase-25-trade .composer-panel { padding: 18px; }
+  .phase-25-trade .builder-row { grid-template-columns: 22px minmax(100px, 1fr) 84px 94px; }
+  .compact-engine-flow { grid-template-columns: minmax(170px, 1fr) 62px 18px minmax(135px, .7fr); }
+}
+
+@media (max-width: 980px) {
+  .phase-25-trade { display: block; }
+  .phase-25-trade .composer-panel { display: grid; }
+  .phase-25-trade .compact-signal-engine { margin-top: 4px; }
+}
+
+@media (max-width: 680px) {
+  .phase-25-trade .market-header { min-height: 92px; grid-template-columns: 1fr auto; padding-inline: 14px; }
+  .phase-25-trade .asset-emblem { width: 38px; height: 38px; }
+  .phase-25-trade .market-title h1 { font-size: 20px; }
+  .phase-25-trade .market-price { min-width: 126px; }
+  .phase-25-trade .market-price > span { font-size: 8px; }
+  .phase-25-trade .market-price strong { font-size: 25px; }
+  .phase-25-trade .market-price small { font-size: 8px; }
+  .phase-25-trade .signal-ribbon { min-height: 68px; }
+  .phase-25-trade .signal-ribbon > div { padding: 9px 11px; }
+  .phase-25-trade .signal-ribbon span, .phase-25-trade .signal-ribbon small { font-size: 9px; }
+  .phase-25-trade .signal-ribbon b { font-size: 13px; }
+  .phase-25-trade .chart-zone { height: 320px; }
+  .phase-25-trade .watch-zone { padding: 18px 14px 16px; }
+  .phase-25-trade .watch-heading { align-items: end; }
+  .phase-25-trade .watch-heading h2 { font-size: 18px; }
+  .phase-25-trade .waiting-reason { font-size: 12px; }
+  .phase-25-trade .readiness strong { font-size: 23px; }
+  .compact-engine-flow { grid-template-columns: 56px 18px minmax(0, 1fr); gap: 7px; padding: 8px; }
+  .compact-engine-signals { grid-column: 1 / -1; grid-row: 1; min-height: 66px; }
+  .compact-engine-signals > div { padding: 8px 6px; }
+  .compact-engine-signals b { font-size: 10px; }
+  .compact-engine-signals small { font-size: 7px; }
+  .compact-engine-core { grid-column: 1; grid-row: 2; }
+  .compact-engine-flow > svg { grid-column: 2; grid-row: 2; }
+  .compact-engine-action { grid-column: 3; grid-row: 2; min-height: 72px; }
+  .phase-25-trade .condition-cell { min-height: 118px; }
+  .phase-25-trade .condition-values { display: grid; grid-template-columns: 1fr 1fr; }
+  .phase-25-trade .metric-value { font-size: 20px; }
+  .phase-25-trade .composer-shell { inset: 58px 0 calc(72px + env(safe-area-inset-bottom)); background: #0d100f; transition: transform var(--motion-medium), visibility var(--motion-medium); }
+  .phase-25-trade .composer-shell .composer-panel { height: 100%; display: block; padding: 62px 16px 120px; overscroll-behavior: contain; }
+  .phase-25-trade .composer-panel > * { margin-top: 16px; }
+  .phase-25-trade .composer-panel .panel-heading { margin-top: 0; }
+  .phase-25-trade .composer-sheet-close { top: 14px; right: 16px; width: 40px; height: 40px; }
+  .phase-25-trade .mobile-compose-trigger { right: 14px; bottom: calc(92px + env(safe-area-inset-bottom)); min-height: 50px; padding-inline: 18px; font-size: 12px; }
+  .phase-25-trade .panel-heading h2 { font-size: 27px; }
+  .phase-25-trade .composer-intro { font-size: 15px; }
+  .phase-25-trade .builder-row { min-height: 118px; grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 54px; gap: 8px; padding: 12px 10px; }
+  .phase-25-trade .builder-toggle { grid-column: 1; grid-row: 1 / 3; align-self: center; }
+  .phase-25-trade .builder-metric { grid-column: 2 / 4; grid-row: 1; }
+  .phase-25-trade .builder-operator { grid-column: 2; grid-row: 2; }
+  .phase-25-trade .builder-target-field { grid-column: 3; grid-row: 2; }
+  .phase-25-trade .builder-row select, .phase-25-trade .builder-target { height: 46px; }
+  .phase-25-trade .constraint-row { grid-template-columns: 1fr; }
+  .phase-25-trade .compact-input, .phase-25-trade .constraint-row select { min-height: 50px; }
+  .phase-25-trade .commitment-summary { padding: 16px; }
+  .phase-25-trade .commitment-summary > div:first-child { grid-template-columns: 22px 1fr; }
+  .phase-25-trade .commitment-summary b { grid-column: 2; margin-top: 5px; font-size: 18px; }
+  .action-consequence { padding: 15px; }
+  .action-consequence li { min-height: 67px; }
+  .action-consequence li b { font-size: 13px; }
+  .action-consequence li small { font-size: 11px; }
+  .phase-25-trade .primary-action { position: static; box-shadow: none; }
+}

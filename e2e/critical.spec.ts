@@ -280,6 +280,13 @@ test("Live Data visibly refuses execution", async ({ page }) => {
 test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, testInfo) => {
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
+  await expect(page.getByText("CURRENT MARKET PRICE")).toBeVisible();
+  await expect(page.getByLabel("Compact Signal Engine state")).toBeVisible();
+  await expect(page.getByLabel("Capital commitment preview")).toBeVisible();
+  await expect(page.getByLabel("What happens when this trigger starts")).toBeVisible();
+  const condition = page.locator(".condition-cell").first();
+  await expect(condition.getByText("CURRENT", { exact: true })).toBeVisible();
+  await expect(condition.getByText("TARGET", { exact: true })).toBeVisible();
 
   const typeSizes = await page.evaluate(() => {
     const size = (selector: string) => Number.parseFloat(getComputedStyle(document.querySelector(selector) as Element).fontSize);
@@ -290,6 +297,7 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
       composerIntro: size(".composer-intro"),
       fieldLabel: size(".field-label"),
       conditionLabel: size(".condition-cell-top"),
+      conditionValue: size(".condition-cell .metric-value"),
       waitingReason: size(".waiting-reason"),
     };
   });
@@ -299,6 +307,7 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
   expect(typeSizes.composerIntro).toBeGreaterThanOrEqual(14);
   expect(typeSizes.fieldLabel).toBeGreaterThanOrEqual(12);
   expect(typeSizes.conditionLabel).toBeGreaterThanOrEqual(11);
+  expect(typeSizes.conditionValue).toBeGreaterThanOrEqual(20);
   expect(typeSizes.waitingReason).toBeGreaterThanOrEqual(12);
 
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
@@ -321,12 +330,20 @@ test("Composer supports one signal or an explicit combination", async ({ page },
   await expect(pnl).not.toBeChecked();
   await expect(page.getByLabel("FUNDING target")).toBeDisabled();
   await expect(page.getByText(/of 1 true now/)).toBeVisible();
+  await expect(page.getByText("One selected signal must qualify.")).toBeVisible();
+  await expect(page.locator(".builder-row").first().getByText(/CURRENT \$/)).toBeVisible();
+  await expect(page.locator(".builder-row").first().getByText("TARGET", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("composer-single-signal.png"), fullPage: false });
 
   await funding.check();
   await expect(price).toBeEnabled();
   await expect(page.getByLabel("FUNDING target")).toBeEnabled();
   await expect(page.getByText(/of 2 true now/)).toBeVisible();
+  await pnl.check();
+  await expect(page.getByText(/of 3 true now/)).toBeVisible();
+  await expect(page.getByText("All 3 selected signals must qualify in one frame.")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("composer-three-signals.png"), fullPage: false });
+  await pnl.uncheck();
   await price.uncheck();
   await expect(funding).toBeDisabled();
   await expect(page.getByText(/of 1 true now/)).toBeVisible();
@@ -677,29 +694,40 @@ test("connection drawer reports real system capability and closes with Escape", 
   await expect(drawer).toBeHidden();
 });
 
-test("mobile prioritizes monitoring and opens Composer as a focused sheet", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/trade");
-  const nav = page.getByRole("navigation", { name: "Mobile navigation" });
-  await expect(nav).toBeVisible();
-  await expect(page.getByRole("region", { name: "Market signal status" })).toBeVisible();
-  await expect(nav.getByText("Portfolio", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "BUILD A TRIGGER" }).click();
-  await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Close Composer" })).toBeVisible();
-  const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
-  const mobileType = await page.evaluate(() => ({
-    title: Number.parseFloat(getComputedStyle(document.querySelector(".composer-panel .panel-heading h2") as Element).fontSize),
-    intro: Number.parseFloat(getComputedStyle(document.querySelector(".composer-intro") as Element).fontSize),
-    fieldLabel: Number.parseFloat(getComputedStyle(document.querySelector(".field-label") as Element).fontSize),
-  }));
-  expect(mobileType.title).toBeGreaterThanOrEqual(23);
-  expect(mobileType.intro).toBeGreaterThanOrEqual(14);
-  expect(mobileType.fieldLabel).toBeGreaterThanOrEqual(12);
-  await page.screenshot({ path: testInfo.outputPath("trade-legibility-mobile.png"), fullPage: false });
-  await page.getByRole("button", { name: "Close Composer" }).click();
-  await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeHidden();
+test("mobile prioritizes monitoring and keeps Composer inside common phone widths", async ({ page }, testInfo) => {
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/trade");
+    const nav = page.getByRole("navigation", { name: "Mobile navigation" });
+    await expect(nav).toBeVisible();
+    await expect(page.getByRole("region", { name: "Market signal status" })).toBeVisible();
+    await expect(nav.getByText("Portfolio", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "BUILD A TRIGGER" }).click();
+    await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Close Composer" })).toBeVisible();
+    await expect(page.getByLabel("Capital commitment preview")).toBeAttached();
+    const dimensions = await page.evaluate(() => {
+      const sheet = document.querySelector("#trigger-composer-sheet")!.getBoundingClientRect();
+      const target = document.querySelector('[aria-label="PRICE target"]')!.getBoundingClientRect();
+      return { scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth, sheetLeft: sheet.left, sheetRight: sheet.right, targetLeft: target.left, targetRight: target.right };
+    });
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
+    expect(dimensions.sheetLeft).toBeGreaterThanOrEqual(0);
+    expect(dimensions.sheetRight).toBeLessThanOrEqual(width);
+    expect(dimensions.targetLeft).toBeGreaterThanOrEqual(0);
+    expect(dimensions.targetRight).toBeLessThanOrEqual(width);
+    const mobileType = await page.evaluate(() => ({
+      title: Number.parseFloat(getComputedStyle(document.querySelector(".composer-panel .panel-heading h2") as Element).fontSize),
+      intro: Number.parseFloat(getComputedStyle(document.querySelector(".composer-intro") as Element).fontSize),
+      fieldLabel: Number.parseFloat(getComputedStyle(document.querySelector(".field-label") as Element).fontSize),
+    }));
+    expect(mobileType.title).toBeGreaterThanOrEqual(23);
+    expect(mobileType.intro).toBeGreaterThanOrEqual(14);
+    expect(mobileType.fieldLabel).toBeGreaterThanOrEqual(12);
+    await page.screenshot({ path: testInfo.outputPath(`trade-composer-${width}.png`), fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeHidden();
+  }
 });
 
 test("Signal Engine converges three readable signals into one action", async ({ page }, testInfo) => {

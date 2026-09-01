@@ -385,8 +385,8 @@ function ConditionStrip({ evaluations, frame }: { evaluations: Evaluation[]; fra
             {evaluation.satisfied ? <CheckCircle size={17} weight="fill" /> : <span className="condition-index">0{index + 1}</span>}
           </div>
           <div className="condition-values">
-            <MetricValue metric={evaluation.metric} value={evaluation.current} />
-            <span className="condition-target">{evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</span>
+            <div><small>CURRENT</small><MetricValue metric={evaluation.metric} value={evaluation.current} /></div>
+            <div className="condition-target"><small>TARGET</small><span>{evaluation.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(evaluation.metric, evaluation.target)}</span></div>
           </div>
           <div className="condition-track"><span style={{ width: evaluation.satisfied ? "100%" : `${Math.max(12, 100 - Number(evaluation.distanceRatio) * 100)}%` }} /></div>
           <small>{providerLabel(frame.observations[evaluation.metric].provider)} · {dateTime(frame.observations[evaluation.metric].sourceTimestamp ?? frame.observations[evaluation.metric].receivedAt)}</small>
@@ -394,6 +394,23 @@ function ConditionStrip({ evaluations, frame }: { evaluations: Evaluation[]; fra
       ))}
     </div>
   );
+}
+
+function CompactSignalEngine({ evaluations, ghost }: { evaluations: Evaluation[]; ghost?: GhostRecord }) {
+  const ready = evaluations.filter((evaluation) => evaluation.satisfied).length;
+  const complete = ready === evaluations.length;
+  const action = ghost
+    ? `${ghost.side} ${ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% SOL`}`
+    : "SELL 25% SOL";
+  return <section className={`compact-signal-engine ${complete ? "ready" : ""}`} aria-label="Compact Signal Engine state">
+    <header><span>SIGNAL ENGINE</span><b>{ready} OF {evaluations.length} SIGNAL{evaluations.length === 1 ? "" : "S"} READY</b></header>
+    <div className="compact-engine-flow">
+      <div className="compact-engine-signals">{evaluations.map((evaluation, index) => <div className={evaluation.satisfied ? "ready" : ""} key={evaluation.metric}><i>{evaluation.satisfied ? <Check size={11} weight="bold" /> : index + 1}</i><span><b>{metricLabels[evaluation.metric]}</b><small>{evaluation.satisfied ? "RULE IS TRUE" : "STILL WATCHING"}</small></span></div>)}</div>
+      <div className="compact-engine-core"><motion.i animate={complete ? { scale: [1, 1.14, 1] } : { scale: 1 }} transition={{ duration: .4 }} /><small>ALL ACTIVE<br />RULES</small></div>
+      <ArrowRight size={18} />
+      <div className="compact-engine-action"><span>{complete ? "READY TO EXECUTE" : "ACTION IF READY"}</span><b>{action}</b><small>{ghost ? "FIRES ONCE" : "PREVIEW ONLY"}</small></div>
+    </div>
+  </section>;
 }
 
 function SignalRibbon({ price, funding, pnl, frame, modeIsLive, provider }: { price: number; funding: string; pnl: string; frame: Frame; modeIsLive: boolean; provider?: string }) {
@@ -486,6 +503,7 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const commitmentValue = state.side === "BUY" ? commitmentAmount : commitmentAmount * price;
   const commitmentAsset = state.side === "BUY" ? "USDC" : "SOL";
   const canCommit = commitmentAmount > 0 && commitmentAmount <= Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available);
+  const actionConsequence = state.side === "BUY" ? `Buy SOL with ${money.format(Number(state.amount))} USDC` : `Sell ${state.amount}% of the SOL position`;
 
   return (
     <aside className="composer-panel">
@@ -520,11 +538,11 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
           const onlyActive = active && state.conditions.length === 1;
           return <div className={`builder-row ${active ? "active" : "inactive"}`} key={metric}>
             <label className="builder-toggle" title={onlyActive ? "At least one condition is required" : active ? `Remove ${metricLabels[metric]}` : `Add ${metricLabels[metric]}`}><input type="checkbox" aria-label={`Use ${metricLabels[metric]} condition`} checked={active} disabled={onlyActive} onChange={() => dispatch({ type: "toggle-condition", metric })} /><span><Check size={10} weight="bold" /></span></label>
-            <span className="builder-metric">{metricLabels[metric]}</span>
-            <select aria-label={`${metric} operator`} disabled={!active} value={condition.operator} onChange={(event) => dispatch({ type: "condition", metric, field: "operator", value: event.target.value })}>
+            <div className="builder-metric"><span>{metricLabels[metric]}</span><small>CURRENT {formatMetric(metric, current[metric].value)}</small></div>
+            <label className="builder-operator"><span>RULE</span><select aria-label={`${metric} operator`} disabled={!active} value={condition.operator} onChange={(event) => dispatch({ type: "condition", metric, field: "operator", value: event.target.value })}>
               <option value="GTE">at least</option><option value="LTE">at most</option>
-            </select>
-            <div className="builder-target"><input aria-label={`${metric} target`} disabled={!active} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => dispatch({ type: "condition", metric, field: "target", value: metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100) })} /><span>{metric === "PRICE" ? "$" : "%"}</span></div>
+            </select></label>
+            <label className="builder-target-field"><span>TARGET</span><div className="builder-target"><input aria-label={`${metric} target`} disabled={!active} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => dispatch({ type: "condition", metric, field: "target", value: metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100) })} /><span>{metric === "PRICE" ? "$" : "%"}</span></div></label>
           </div>;
         })}
       </div>
@@ -539,6 +557,10 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         <div><LockSimple size={18} weight="duotone" /><span>RESERVED WHEN ACTIVE</span><b>{quantity.format(commitmentAmount)} {commitmentAsset}</b></div>
         <dl><div><dt>EST. VALUE</dt><dd>${money.format(commitmentValue)}</dd></div><div><dt>REMAINS AVAILABLE</dt><dd>${money.format(Math.max(0, Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available) * (state.side === "BUY" ? 1 : price) - commitmentValue))}</dd></div></dl>
         <p>{canCommit ? "Reserved only after arming. Released on cancel or expiry." : "Commitment exceeds currently available virtual funds."}</p>
+      </section>
+      <section className="action-consequence" aria-label="What happens when this trigger starts">
+        <header><Lightning size={17} weight="duotone" /><span>WHAT HAPPENS WHEN YOU START</span></header>
+        <ol><li><i>1</i><span><b>Reserve virtual capital</b><small>{quantity.format(commitmentAmount)} {commitmentAsset} is set aside before monitoring.</small></span></li><li><i>2</i><span><b>Wait for every active rule</b><small>{state.conditions.length === 1 ? "One selected signal must qualify." : `All ${state.conditions.length} selected signals must qualify in one frame.`}</small></span></li><li><i>3</i><span><b>{actionConsequence} once</b><small>A receipt is stored. Cancel or expiry releases unused capital.</small></span></li></ol>
       </section>
       <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Simulation ready</span></button>
       {error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{error}</b><small>No capital moved. Your editable Composer values remain in place.</small></div></div>}
@@ -712,6 +734,19 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  useEffect(() => {
+    if (!composerOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setComposerOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [composerOpen]);
   const selected = workspace.ghosts.find((ghost) => ghost.id === selectedId) ?? workspace.ghosts.find((ghost) => ["WATCHING", "PAUSED", "DRAFT"].includes(ghost.status)) ?? workspace.ghosts[0];
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
   const price = Number(modeIsLive && live ? live.price : workspace.frame.observations.PRICE.value);
@@ -724,12 +759,12 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
   const step = useMutation({ mutationFn: () => api("/api/demo/step", { method: "POST" }), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }) });
 
   return (
-    <div className="trade-layout">
+    <div className="trade-layout phase-25-trade">
       <div id="portfolio"><PortfolioRail workspace={workspace} price={price} /></div>
       <main className="market-workspace">
         <section className="market-header">
           <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL <i>/</i> USDC</h1></div></div>
-          <div className="market-price"><motion.strong key={price} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>${money.format(price)}</motion.strong><span className="positive">+4.84%</span></div>
+          <div className="market-price"><span>CURRENT MARKET PRICE</span><motion.strong key={price} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>${money.format(price)}</motion.strong><small className="positive">+4.84% TODAY</small></div>
           <div className={`execution-mode ${modeIsLive ? "monitor" : ""}`}><i /><span>{modeIsLive ? "MONITORING ONLY" : "SIMULATED EXECUTION"}</span><b>{modeIsLive ? "LIVE DATA" : "DEMO FEED"}</b></div>
         </section>
         <SignalRibbon price={price} funding={funding} pnl={pnl} frame={workspace.frame} modeIsLive={modeIsLive} provider={live?.provider} />
@@ -743,6 +778,7 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
             <div><span className="eyebrow">WHAT THIS TRIGGER IS WAITING FOR</span><h2>{selected ? selected.name : "Your first trigger"}</h2><p className="waiting-reason"><Pulse size={13} />{waitingReason}</p></div>
             <div className="readiness"><span>{ready} / {conditionCount} READY</span><strong>{Math.round((ready / conditionCount) * 100)}%</strong></div>
           </div>
+          <CompactSignalEngine evaluations={evaluations} ghost={selected} />
           <ConditionStrip evaluations={evaluations} frame={workspace.frame} />
           <GhostLifecycle ghost={selected} />
         </section>
@@ -753,8 +789,8 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
         <FeedControls workspace={workspace} step={() => step.mutate()} stepping={step.isPending} />
         <AnimatePresence>{selected?.status === "FILLED" && <motion.div className="execution-flash" role="status" initial={{ opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span><Check size={24} weight="bold" /></span><div><b>TRIGGER FILLED</b><small>Simulated settlement committed exactly once</small></div></motion.div>}</AnimatePresence>
       </main>
-      <button className="mobile-compose-trigger" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
-      <div className={`composer-shell ${composerOpen ? "open" : ""}`}><button className="composer-sheet-close" title="Close Composer" onClick={() => setComposerOpen(false)}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
+      <button className="mobile-compose-trigger" aria-expanded={composerOpen} aria-controls="trigger-composer-sheet" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
+      <div id="trigger-composer-sheet" className={`composer-shell ${composerOpen ? "open" : ""}`}><button className="composer-sheet-close" title="Close Composer" onClick={() => setComposerOpen(false)}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
     </div>
   );
 }
