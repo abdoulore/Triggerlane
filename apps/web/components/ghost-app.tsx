@@ -346,6 +346,26 @@ function providerLabel(value: string) {
   return value.replace(/^ghost-demo-feed$/i, "triggerlane-demo-feed");
 }
 
+const metricLabels: Record<Metric, string> = { PRICE: "SOL price", FUNDING: "Perp funding", PNL: "Position P&L" };
+
+function ghostStateSummary(ghost: GhostRecord, frame: Frame) {
+  const ready = ghost.evaluations.filter((evaluation) => evaluation.satisfied).length;
+  const total = ghost.evaluations.length;
+  if (frame.completeness !== "COMPLETE") return { tone: "blocked", label: "SAFETY HOLD", headline: frame.completeness === "STALE" ? "Fresh market data is missing" : "One complete market frame is missing", reason: "No action can run until every selected signal is stored together in one complete frame.", ready, total };
+  if (ghost.status === "DRAFT") return { tone: "draft", label: "NOT STARTED", headline: "Ready for your review", reason: "No capital is reserved until you start watching.", ready, total };
+  if (ghost.status === "PAUSED") return { tone: "blocked", label: ghost.pauseReason === "USER" ? "PAUSED BY YOU" : "SAFETY HOLD", headline: ghost.pauseReason === "DATA_STALE" ? "Waiting for fresh market data" : ghost.pauseReason === "FRAME_INCOMPLETE" ? "Waiting for a complete market frame" : "Monitoring is paused", reason: "This trigger cannot act while paused. Reserved capital remains controlled.", ready, total };
+  if (ghost.status === "FILLED") return { tone: "complete", label: "FINISHED", headline: "Executed once and settled", reason: "A qualifying frame, quote, reservation, receipt, and ledger movement were stored.", ready, total };
+  if (ghost.status === "FAILED") return { tone: "blocked", label: "SETTLEMENT FAILED", headline: "The action did not settle", reason: "No ledger movement was committed. The failure and capital outcome remain in the audit trail.", ready, total };
+  if (ghost.status === "CANCELLED") return { tone: "terminal", label: "STOPPED", headline: "Cancelled before execution", reason: "Monitoring ended and reserved capital was released without a trade.", ready, total };
+  if (ghost.status === "EXPIRED") return { tone: "terminal", label: "DEADLINE PASSED", headline: "Expired before execution", reason: "The full moment did not arrive before the deadline, so capital was released.", ready, total };
+  const waiting = [...ghost.evaluations].filter((evaluation) => !evaluation.satisfied).sort((left, right) => Number(left.distanceRatio) - Number(right.distanceRatio));
+  if (!waiting.length) return { tone: "ready", label: "ALL SIGNALS READY", headline: "The whole moment is here", reason: "Every selected signal is true in this complete frame. The one-shot action can continue.", ready, total };
+  const next = waiting[0]!;
+  const direction = next.operator === "GTE" ? "reach at least" : "fall to at most";
+  const otherCount = waiting.length - 1;
+  return { tone: "watching", label: `${ready} OF ${total} READY`, headline: `${metricLabels[next.metric]} is the next missing signal`, reason: `Current ${formatMetric(next.metric, next.current)}; it must ${direction} ${formatMetric(next.metric, next.target)}${otherCount ? `, with ${otherCount} other signal${otherCount === 1 ? "" : "s"} still waiting` : ""}.`, ready, total };
+}
+
 function ghostWaitingReason(ghost: GhostRecord | undefined, evaluations: Evaluation[], frame: Frame) {
   if (frame.completeness !== "COMPLETE") return frame.completeness === "STALE" ? "Waiting for fresh market data" : "Waiting for one complete observation frame";
   if (!ghost) return "Choose the moment on the right, then save your trigger";
@@ -365,8 +385,6 @@ function Logo() {
     </a>
   );
 }
-
-const metricLabels: Record<Metric, string> = { PRICE: "SOL price", FUNDING: "Perp funding", PNL: "Position P&L" };
 
 function ConditionStrip({ evaluations, frame }: { evaluations: Evaluation[]; frame: Frame }) {
   return (
@@ -853,7 +871,7 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
   const price = Number(workspace.frame.observations.PRICE.value);
   const terminalStatuses = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"];
   const capitalValue = (ghost: GhostRecord) => ghost.reservation ? Number(ghost.reservation.amount) * (ghost.reservation.asset === "SOL" ? price : 1) : 0;
-  const reasonFor = (ghost: GhostRecord) => ghostWaitingReason(ghost, ghost.evaluations, workspace.frame);
+  const reasonFor = (ghost: GhostRecord) => { const summary = ghostStateSummary(ghost, workspace.frame); return `${summary.headline}. ${summary.reason}`; };
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rows = workspace.ghosts.filter((ghost) => {
@@ -913,7 +931,19 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
         {filtersActive && <button className="reset-filters" onClick={() => { setStatusFilter("ALL"); setActionFilter("ALL"); setProximityFilter("ALL"); setSearch(""); }}><X size={15} />RESET</button>}
       </section>
 
-      {workspace.ghosts.length === 0 ? <div className="empty-state ghost-command-empty"><BrandIcon size={42} weight="duotone" /><h2>Your first trigger starts with a moment</h2><p>Choose what must be true, decide how much virtual capital it may use, then let Triggerlane watch.</p><a href="/trade">BUILD YOUR FIRST TRIGGER<ArrowRight size={15} /></a></div> : filtered.length === 0 ? <div className="empty-state ghost-command-empty"><SlidersHorizontal size={38} /><h2>No triggers match these filters</h2><p>Try another state, action, trigger distance, or search term.</p><button onClick={() => { setStatusFilter("ALL"); setActionFilter("ALL"); setProximityFilter("ALL"); setSearch(""); }}>SHOW ALL TRIGGERS</button></div> : <div className="ghost-state-groups">{groups.filter((group) => group.ghosts.length > 0).map((group) => <section className={`ghost-state-band state-${group.id.toLowerCase()}`} aria-labelledby={`state-${group.id}`} key={group.id}><header><div><span>{group.ghosts.length}</span><div><h2 id={`state-${group.id}`}>{group.title}</h2><p>{group.description}</p></div></div><b>{group.id}</b></header><div className="ghost-command-rows">{group.ghosts.map((ghost) => <article className="ghost-command-row" key={ghost.id}><div className="ghost-command-identity"><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><div><div><a href={`/ghost/${ghost.id}`}>{ghost.name}</a><StatusBadge status={ghost.status} /></div><p><Pulse size={13} />{reasonFor(ghost)}</p></div></div><GhostSignalTrace evaluations={ghost.evaluations} /><div className="ghost-command-intent"><span>ACTION</span><b>{ghost.side} {ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% SOL`}</b><small>maximum {ghost.maxSlippageBps} bps slippage</small></div><div className="ghost-command-capital"><span>SET ASIDE</span><b>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset}` : "Nothing yet"}</b><small>{ghost.reservation?.status ?? "starts when armed"}</small></div><div className="ghost-command-expiry"><span>DEADLINE</span><b>{expiryDistance(ghost.expiresAt)}</b><small>{dateTime(ghost.expiresAt)}</small></div><GhostActions ghost={ghost} /></article>)}</div></section>)}</div>}
+      {workspace.ghosts.length === 0 ? <div className="empty-state ghost-command-empty"><BrandIcon size={42} weight="duotone" /><h2>Your first trigger starts with a moment</h2><p>Choose what must be true, decide how much virtual capital it may use, then let Triggerlane watch.</p><a href="/trade">BUILD YOUR FIRST TRIGGER<ArrowRight size={15} /></a></div> : filtered.length === 0 ? <div className="empty-state ghost-command-empty"><SlidersHorizontal size={38} /><h2>No triggers match these filters</h2><p>Try another state, action, trigger distance, or search term.</p><button onClick={() => { setStatusFilter("ALL"); setActionFilter("ALL"); setProximityFilter("ALL"); setSearch(""); }}>SHOW ALL TRIGGERS</button></div> : <div className="ghost-state-groups">{groups.filter((group) => group.ghosts.length > 0).map((group) => <section className={`ghost-state-band state-${group.id.toLowerCase()}`} aria-labelledby={`state-${group.id}`} key={group.id}><header><div><span>{group.ghosts.length}</span><div><h2 id={`state-${group.id}`}>{group.title}</h2><p>{group.description}</p></div></div><b>{group.id}</b></header><div className="ghost-command-rows">{group.ghosts.map((ghost) => {
+        const summary = ghostStateSummary(ghost, workspace.frame);
+        const action = `${ghost.side} ${ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% SOL`}`;
+        const evidence = ghost.status === "FILLED" ? "Receipt stored" : ["CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "Outcome stored" : expiryDistance(ghost.expiresAt);
+        return <article className={`ghost-command-row answer-${summary.tone}`} key={ghost.id}>
+          <div className="ghost-command-identity"><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><div><div><a href={`/ghost/${ghost.id}`}>{ghost.name}</a><StatusBadge status={ghost.status} /></div><small>{ghost.side} · ONE SHOT · SOL/USDC</small></div></div>
+          <div className="ghost-command-answer"><span>{summary.label}</span><b>{summary.headline}</b><p>{summary.reason}</p></div>
+          <GhostSignalTrace evaluations={ghost.evaluations} />
+          <div className="ghost-command-intent"><span>ACTION IF READY</span><b>{action}</b><small>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset} set aside` : "capital starts when armed"}</small></div>
+          <div className="ghost-command-expiry"><span>{["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "AUDIT EVIDENCE" : "DEADLINE"}</span><b>{evidence}</b><small>{dateTime(["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? ghost.updatedAt : ghost.expiresAt)}</small></div>
+          <GhostActions ghost={ghost} />
+        </article>;
+      })}</div></section>)}</div>}
 
       {filtered.length > pageSize && <nav className="ghost-pagination" aria-label="Trigger list pages"><span>Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length}</span><div><button title="Previous page" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><CaretLeft size={17} /></button><b>PAGE {currentPage} OF {totalPages}</b><button title="Next page" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}><CaretRight size={17} /></button></div></nav>}
     </main>
@@ -1139,28 +1169,28 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
   }), [frame.observations, ghost.evaluations]);
   const viewingHistory = inspectionStage !== actualStage;
   const inspectedStatus = detailLifecycle[inspectionStage] ?? detailLifecycle[0];
+  const stateSummary = ghostStateSummary(ghost, frame);
+  const settlementEvidence = ghost.status === "FILLED" ? "Receipt and ledger stored" : ghost.status === "FAILED" ? "No ledger commit" : ["CANCELLED", "EXPIRED"].includes(ghost.status) ? "No execution attempted" : "Pending qualification";
 
   return (
-    <main className="detail-page">
-      <div className="detail-title"><div><a href="/ghosts">TRIGGERS</a><span>/</span><span>{ghost.id.slice(0, 8)}</span></div><div className="detail-heading"><span className="large-ghost"><BrandIcon size={31} weight="duotone" /></span><div><span className="eyebrow">ONE-SHOT {ghost.side} INTENT</span><h1>{ghost.name}</h1></div><StatusBadge status={ghost.status} /></div></div>
+    <main className={`detail-page phase-26-detail detail-state-${stateSummary.tone}`}>
+      <div className="detail-title"><div><a href="/ghosts">TRIGGERS</a><span>/</span><span>CURRENT STATUS</span></div><div className="detail-heading"><span className="large-ghost"><BrandIcon size={31} weight="duotone" /></span><div><span className="eyebrow">ONE-SHOT {ghost.side} INTENT</span><h1>{ghost.name}</h1></div><StatusBadge status={ghost.status} /></div></div>
 
       <section className={`detail-observatory ${dataPaused ? "data-blocked" : ""}`} aria-labelledby="ghost-core-heading">
+        <aside className="observatory-brief">
+          <div className="detail-current-answer"><span>{stateSummary.label}</span><h2 id="ghost-core-heading">{coreHeadline}</h2><p>{coreMessage}</p><small>{stateSummary.reason}</small></div>
+          <dl className="observatory-facts">
+            <div className="primary-fact"><dt>READINESS NOW</dt><dd>{ready} of {conditionCount} conditions ready</dd></div>
+            <div><dt>CAPITAL SET ASIDE</dt><dd>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset}` : "Nothing reserved"}</dd></div>
+            <div><dt>ACTION IF READY</dt><dd>{ghost.side} {ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% of SOL`}</dd></div>
+            <div><dt>DEADLINE</dt><dd>{dateTime(ghost.expiresAt)}</dd></div>
+          </dl>
+        </aside>
         <div className="detail-scene-stage">
-          <GhostCoreScene conditions={sceneConditions} blocked={dataPaused} lifecycleStage={inspectionStage} status={viewingHistory ? inspectedStatus : ghost.status} />
+          <GhostCoreScene conditions={sceneConditions} blocked={dataPaused || ghost.status === "FAILED"} lifecycleStage={inspectionStage} status={viewingHistory ? inspectedStatus : ghost.status} />
           <div className="scene-state"><span>{viewingHistory ? "VIEWING REACHED STATE" : dataPaused ? "SAFETY PAUSE" : "CURRENT STATE"}</span><b>{viewingHistory ? inspectedStatus : ghost.status}</b></div>
           <div className="scene-frame"><Database size={15} /><span>FRAME {frame.id.slice(0, 8)}</span><b>{frame.completeness}</b></div>
         </div>
-        <aside className="observatory-brief">
-          <div><span className="eyebrow">WHY THIS TRIGGER IS HERE</span><h2 id="ghost-core-heading">{coreHeadline}</h2><p>{coreMessage}</p></div>
-          <dl className="observatory-facts">
-            <div><dt>Ready now</dt><dd>{ready} of {conditionCount} conditions</dd></div>
-            <div><dt>Capital set aside</dt><dd>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset}` : "Nothing reserved"}</dd></div>
-            <div><dt>Action</dt><dd>{ghost.side} {ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% of SOL`}</dd></div>
-            <div><dt>Deadline</dt><dd>{dateTime(ghost.expiresAt)}</dd></div>
-            <div><dt>Maximum slippage</dt><dd>{ghost.maxSlippageBps} bps</dd></div>
-            <div><dt>Execution</dt><dd>Triggerlane Simulation</dd></div>
-          </dl>
-        </aside>
       </section>
 
       {framePredatesArm && <section className="prearm-frame-notice" role="status"><ClockCounterClockwise size={22} /><div><b>This qualifying frame is older than the armed order</b><p>This trigger will never execute against evidence captured before you started watching.</p></div><button onClick={advanceFrame} disabled={advancingFrame}>{advancingFrame ? "CHECKING..." : "CHECK FRESH DEMO FRAME"}<ArrowRight size={16} /></button></section>}
@@ -1172,6 +1202,13 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
           <div className="lifecycle-stages">{detailLifecycle.map((status, index) => <button className={`${index <= actualStage ? "reached" : ""} ${index === inspectionStage ? "selected" : ""}`} disabled={index > actualStage} aria-pressed={index === inspectionStage} key={status} onClick={() => setInspectionStage(index)}><i>{index < actualStage ? <Check size={12} /> : index + 1}</i><span>{status}</span></button>)}</div>
           <small>{viewingHistory ? `Viewing ${inspectedStatus}. Actual status is ${ghost.status}.` : `Showing the current stored status: ${ghost.status}.`}</small>
         </div>
+      </section>
+
+      <section className="detail-evidence-summary" aria-label="Stored trigger evidence">
+        <div><span>CONDITIONS</span><b>{ready}/{conditionCount} stored</b><small>current evaluation state</small></div>
+        <div><span>MARKET FRAME</span><b>{frame.completeness}</b><small>{frame.executionEligible ? "execution eligible" : "view only"}</small></div>
+        <div><span>CAPITAL</span><b>{ghost.reservation?.status ?? "NOT RESERVED"}</b><small>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset}` : "no capital controlled"}</small></div>
+        <div><span>SETTLEMENT</span><b>{settlementEvidence}</b><small>{ghost.status === "FILLED" ? "immutable simulated receipt" : "owned balances unchanged unless filled"}</small></div>
       </section>
 
       <div className="detail-grid">

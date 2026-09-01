@@ -89,18 +89,21 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
     const mint = new THREE.Color(0x70f2cc);
     const amber = new THREE.Color(0xe5bb68);
     const quiet = new THREE.Color(0x33403c);
-    const stateColor = blocked ? amber : mint;
+    const paused = blocked || status === "PAUSED";
+    const filled = status === "FILLED";
+    const terminal = ["CANCELLED", "EXPIRED", "FAILED"].includes(status);
+    const stateColor = blocked || status === "FAILED" ? amber : terminal ? quiet : mint;
 
     const grid = new THREE.GridHelper(22, 22, 0x23302d, 0x111816);
     grid.position.set(0, -3.45, 0);
     scene.add(grid);
 
-    const coreShellMaterial = new THREE.MeshBasicMaterial({ color: lifecycleStage > 0 ? stateColor : quiet, wireframe: true, transparent: true, opacity: 0.9 });
+    const coreShellMaterial = new THREE.MeshBasicMaterial({ color: lifecycleStage > 0 ? stateColor : quiet, wireframe: true, transparent: true, opacity: terminal && !filled ? 0.52 : 0.9 });
     const coreShell = new THREE.Mesh(new THREE.IcosahedronGeometry(1.12, 1), coreShellMaterial);
     coreShell.position.set(1.1, 0, 0);
     group.add(coreShell);
 
-    const coreInnerMaterial = new THREE.MeshBasicMaterial({ color: lifecycleStage >= 2 ? stateColor : quiet, transparent: true, opacity: lifecycleStage >= 2 ? 0.13 : 0.06 });
+    const coreInnerMaterial = new THREE.MeshBasicMaterial({ color: lifecycleStage >= 2 || filled ? stateColor : quiet, transparent: true, opacity: filled ? 0.22 : lifecycleStage >= 2 ? 0.13 : 0.06 });
     const coreInner = new THREE.Mesh(new THREE.SphereGeometry(0.72, 24, 24), coreInnerMaterial);
     coreInner.position.copy(coreShell.position);
     group.add(coreInner);
@@ -173,7 +176,7 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
     );
     group.add(exitPath);
     const packet = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.19, 0.19), new THREE.MeshBasicMaterial({ color: stateColor }));
-    packet.visible = lifecycleStage >= 3;
+    packet.visible = lifecycleStage >= 3 || filled;
     group.add(packet);
 
     const resize = () => {
@@ -201,12 +204,13 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
     let request = 0;
     const render = () => {
       const elapsed = clock.getElapsedTime();
-      coreShell.rotation.x = reducedMotion ? 0.42 : elapsed * 0.18;
-      coreShell.rotation.y = reducedMotion ? 0.62 : elapsed * 0.26;
-      coreInner.scale.setScalar(reducedMotion ? 1 : 1 + Math.sin(elapsed * 1.7) * 0.045);
-      rings.forEach((ring, index) => { if (!reducedMotion) ring.rotation.z = elapsed * (index ? -0.12 : 0.16); });
+      const still = reducedMotion || paused || terminal;
+      coreShell.rotation.x = still ? 0.42 : elapsed * (filled ? 0.09 : 0.18);
+      coreShell.rotation.y = still ? 0.62 : elapsed * (filled ? 0.13 : 0.26);
+      coreInner.scale.setScalar(still ? 1 : 1 + Math.sin(elapsed * (filled ? 1.1 : 1.7)) * (filled ? 0.075 : 0.045));
+      rings.forEach((ring, index) => { if (!still) ring.rotation.z = elapsed * (index ? -0.12 : 0.16); });
       nodes.forEach((node, index) => {
-        if (!reducedMotion) {
+        if (!still) {
           node.rotation.x = elapsed * (0.24 + index * 0.03);
           node.rotation.y = elapsed * (0.32 + index * 0.04);
           const pulse = conditions[index]?.satisfied ? 1 + Math.sin(elapsed * 2.2 + index) * 0.07 : 1;
@@ -216,11 +220,11 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
         }
       });
       if (packet.visible) {
-        const progress = lifecycleStage >= 4 ? 1 : reducedMotion ? 0.58 : (elapsed * 0.22) % 1;
+        const progress = filled || lifecycleStage >= 4 ? 1 : still ? 0.58 : (elapsed * 0.22) % 1;
         packet.position.lerpVectors(new THREE.Vector3(2.3, 0, 0), new THREE.Vector3(6.6, 0.2, -0.9), progress);
       }
-      group.rotation.x += ((reducedMotion ? 0 : pointerTarget.x) - group.rotation.x) * 0.035;
-      group.rotation.y += ((reducedMotion ? -0.04 : pointerTarget.y - 0.04) - group.rotation.y) * 0.035;
+      group.rotation.x += ((still ? 0 : pointerTarget.x) - group.rotation.x) * 0.035;
+      group.rotation.y += ((still ? -0.04 : pointerTarget.y - 0.04) - group.rotation.y) * 0.035;
       renderer.render(scene, camera);
       request = requestAnimationFrame(render);
     };
@@ -240,7 +244,7 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [blocked, conditions, lifecycleStage, reducedMotion]);
+  }, [blocked, conditions, lifecycleStage, reducedMotion, status]);
 
   if (fallback) {
     return <div className={`ghost-core-fallback ${blocked ? "blocked" : ""}`} role="img" aria-label={`Trigger visualization fallback. Status ${status}.`}>

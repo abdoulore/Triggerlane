@@ -202,6 +202,7 @@ test("creates, arms, settles, and receipts one Ghost exactly once", async ({ pag
   await page.getByRole("button", { name: "Close receipt" }).click();
   await page.goto("/ghosts");
   await page.getByTitle("Open Trigger").first().click();
+  await expect(page.getByLabel("Stored trigger evidence")).toContainText("Receipt and ledger stored");
   await expect(page.getByRole("heading", { name: "One action, fully accounted for" })).toBeVisible();
   await expect(page.getByText("Quote model", { exact: true })).toBeVisible();
   await expect(page.getByText("Ledger transaction", { exact: true })).toBeVisible();
@@ -211,7 +212,14 @@ test("Ghost Detail renders a real data-driven 3D core and truthful lifecycle", a
   await openWatchingGhostDetail(page);
   await expect(page.getByRole("heading", { name: /parts of the moment|has not reached|whole moment/i })).toBeVisible();
   await expect(page.getByRole("table", { name: "Exact condition observations" }).getByRole("row")).toHaveCount(1);
-  await expect(page.getByText("Triggerlane Simulation", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Stored trigger evidence")).toBeVisible();
+  await expect(page.locator(".detail-current-answer")).toContainText(/Current|must|wait|ready/i);
+  const answerFirst = await page.evaluate(() => {
+    const answer = document.querySelector(".observatory-brief")!;
+    const scene = document.querySelector(".detail-scene-stage")!;
+    return Boolean(answer.compareDocumentPosition(scene) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(answerFirst).toBe(true);
 
   const canvas = page.locator('canvas[data-scene="ghost-core"]');
   await expect(canvas).toBeVisible();
@@ -241,6 +249,7 @@ test("Ghost Detail renders a real data-driven 3D core and truthful lifecycle", a
 test("Ghost Detail keeps its 3D meaning and framing on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openWatchingGhostDetail(page);
+  await expect(page.locator(".detail-current-answer")).toBeVisible();
   const canvas = page.locator('canvas[data-scene="ghost-core"]');
   await expect(canvas).toBeVisible();
   const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
@@ -253,6 +262,12 @@ test("Ghost Detail keeps its 3D meaning and framing on mobile", async ({ page },
   expect(pixels).toBeGreaterThan(0);
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
+  const mobileOrder = await page.evaluate(() => {
+    const answer = document.querySelector(".observatory-brief")!.getBoundingClientRect();
+    const scene = document.querySelector(".detail-scene-stage")!.getBoundingClientRect();
+    return { answerTop: answer.top, sceneTop: scene.top };
+  });
+  expect(mobileOrder.answerTop).toBeLessThan(mobileOrder.sceneTop);
   await page.screenshot({ path: testInfo.outputPath("ghost-detail-mobile.png"), fullPage: false });
 });
 
@@ -267,7 +282,7 @@ test("Ghost Detail has a complete no-WebGL fallback", async ({ page }) => {
   await openWatchingGhostDetail(page);
   await expect(page.getByLabel(/Trigger visualization fallback/)).toBeVisible();
   await expect(page.locator(".fallback-nodes > div")).toHaveCount(1);
-  await expect(page.getByText("OF 1 READY")).toBeVisible();
+  await expect(page.getByText("OF 1 READY", { exact: true })).toBeVisible();
 });
 
 test("Live Data visibly refuses execution", async ({ page }) => {
@@ -564,8 +579,14 @@ test("Ghost command center makes state, distance, capital, and actions scannable
   await expect(page.getByTitle("Start unavailable while status is WATCHING")).toBeDisabled();
 
   const nearRow = page.locator(".ghost-command-row").filter({ hasText: "Near Ready" });
+  await expect(nearRow.locator(".ghost-command-answer")).toContainText("READY");
+  await expect(nearRow.locator(".ghost-command-answer")).toContainText("Current");
+  const settledRow = page.locator(".ghost-command-row").filter({ hasText: "Settled Exit" });
+  await expect(settledRow.locator(".ghost-command-answer")).toContainText("Executed once and settled");
+  await expect(settledRow).toContainText("Receipt stored");
   await nearRow.getByTitle("Pause Trigger").click();
   await expect(page.locator(".state-paused")).toContainText("Near Ready");
+  await expect(page.locator(".state-paused").filter({ hasText: "Near Ready" })).toContainText("Monitoring is paused");
 
   await page.getByRole("button", { name: "Draft", exact: true }).click();
   await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
@@ -591,9 +612,14 @@ test("Ghost command center remains usable on mobile", async ({ page }, testInfo)
   await seedGhostCommandCenter(page);
   await expect(page.locator(".closest-ghost")).toContainText("Near Ready");
   await expect(page.getByRole("button", { name: "All states" })).toBeVisible();
+  await expect(page.locator(".ghost-command-row").filter({ hasText: "Near Ready" }).locator(".ghost-command-answer")).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
   await page.screenshot({ path: testInfo.outputPath("ghost-command-center-mobile.png"), fullPage: false });
+  const nearRow = page.locator(".ghost-command-row").filter({ hasText: "Near Ready" });
+  await nearRow.scrollIntoViewIfNeeded();
+  await expect(nearRow.locator(".ghost-command-answer")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("ghost-command-center-mobile-row.png"), fullPage: false });
 });
 
 test("Ghost command center paginates large lists", async ({ page }) => {
