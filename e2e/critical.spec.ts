@@ -171,7 +171,7 @@ test("creates, arms, settles, and receipts one Ghost exactly once", async ({ pag
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "SOL / USDC" })).toBeVisible();
   await expect(page.getByText("DEMO FEED · EXECUTION ELIGIBLE")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Market signal status" })).toContainText("FRESHNESS");
+  await expect(page.getByRole("region", { name: "Market overview" })).toContainText("UPDATED");
   await expect(page.getByRole("region", { name: "Capital commitment preview" })).toContainText("10 SOL");
   await expect(page.getByLabel(/Trigger lifecycle:/)).toContainText("WATCHING");
   await expect(page.locator(".waiting-reason")).toBeVisible();
@@ -287,7 +287,8 @@ test("Ghost Detail has a complete no-WebGL fallback", async ({ page }) => {
 
 test("Live Data visibly refuses execution", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "LIVE DATA", exact: true }).click();
+  await page.getByRole("button", { name: "Open Simulation settings" }).click();
+  await page.getByRole("dialog", { name: "Simulation and data settings" }).getByRole("button", { name: "LIVE DATA", exact: true }).click();
   await expect(page.getByText("LIVE DATA · MONITORING ONLY")).toBeVisible();
   await expect(page.getByRole("button", { name: "ADVANCE FEED" })).toBeDisabled();
 });
@@ -467,7 +468,8 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   expect(afterCount).toBe(beforeCount);
 
   await page.goto("/discover");
-  await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+  await page.getByRole("button", { name: "Open account" }).click();
+  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "NEW HERE?" }).click();
   const guide = page.getByRole("dialog", { name: "Learn before you build" });
   await expect(guide).toContainText("Replay explores demo history");
   const guideAccessibility = await new AxeBuilder({ page }).include(".onboarding-panel").withTags(["wcag2a", "wcag2aa"]).analyze();
@@ -488,7 +490,8 @@ test("Discover remains composed on a phone", async ({ page }, testInfo) => {
   await expect(page.locator(".strategy-lattice-mobile")).toBeVisible();
   await expect(page.locator(".strategy-lattice-desktop")).toBeHidden();
   await expect(page.locator(".mobile-lattice-signal")).toHaveCount(3);
-  await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+  await page.getByRole("button", { name: "Open account" }).click();
+  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "NEW HERE?" }).click();
   await expect(page.getByRole("dialog", { name: "Learn before you build" })).toBeVisible();
   await page.waitForTimeout(300);
   await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-guide.png"), fullPage: false });
@@ -513,7 +516,8 @@ test("Discover remains composed on a phone", async ({ page }, testInfo) => {
 test("contextual beginner help follows the current product task", async ({ page }) => {
   for (const [path, title] of [["/trade", "Build one clear trigger"], ["/ghosts", "Read triggers by attention"], ["/portfolio", "Follow every virtual dollar"], ["/history", "Read the outcome first"]]) {
     await page.goto(path);
-    await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+    await page.getByRole("button", { name: "Open account" }).click();
+    await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "NEW HERE?" }).click();
     const guide = page.getByRole("dialog", { name: title });
     await expect(guide).toBeVisible();
     await expect(guide).toContainText("Simulation stays in your control");
@@ -770,22 +774,22 @@ test("AI Composer requires review before applying a structured Ghost", async ({ 
   expect(serious).toEqual([]);
 });
 
-test("connection drawer reports real system capability and closes with Escape", async ({ page }) => {
+test("Simulation menu reports real system capability and closes with Escape", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "SIMULATED EXECUTION" }).click();
-  const drawer = page.getByRole("dialog", { name: "Connections" });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByText("PRICE FEED")).toBeVisible();
-  await expect(drawer.getByText("FUNDING FEED")).toBeVisible();
-  await expect(drawer.getByText("TRIGGER ENGINE")).toBeVisible();
-  await expect(drawer.getByText("SIMULATED EXECUTION")).toBeVisible();
-  await expect(drawer.getByText("Rialo remains unavailable and is not reported as connected.")).toBeVisible();
+  await page.getByRole("button", { name: "Open Simulation settings" }).click();
+  const menu = page.getByRole("dialog", { name: "Simulation and data settings" });
+  await expect(menu).toBeVisible();
+  await menu.getByText("CONNECTION DETAILS", { exact: true }).click();
+  await expect(menu.getByText("Price and funding")).toBeVisible();
+  await expect(menu.getByText("Trigger engine")).toBeVisible();
+  await expect(menu.getByText("Execution", { exact: true })).toBeVisible();
+  await expect(menu.getByText("Rialo remains unavailable and is not reported as connected.")).toBeVisible();
 
-  const accessibility = await new AxeBuilder({ page }).include(".connection-drawer").withTags(["wcag2a", "wcag2aa"]).analyze();
+  const accessibility = await new AxeBuilder({ page }).include(".simulation-menu").withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious).toEqual([]);
   await page.keyboard.press("Escape");
-  await expect(drawer).toBeHidden();
+  await expect(menu).toBeHidden();
 });
 
 test("mobile prioritizes monitoring and keeps Composer inside common phone widths", async ({ page }, testInfo) => {
@@ -794,7 +798,7 @@ test("mobile prioritizes monitoring and keeps Composer inside common phone width
     await page.goto("/trade");
     const nav = page.getByRole("navigation", { name: "Mobile navigation" });
     await expect(nav).toBeVisible();
-    await expect(page.getByRole("region", { name: "Market signal status" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Market overview" })).toBeVisible();
     await expect(nav.getByText("Portfolio", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "BUILD A TRIGGER" }).click();
     await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();

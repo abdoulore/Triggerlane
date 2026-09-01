@@ -161,9 +161,10 @@ test("first-time comprehension and honesty gate covers the ten product questions
   await expect(page.getByText(/simulated capital/i).first()).toBeVisible();
 
   await page.goto("/trade");
-  await expect(page.getByText("PRICE", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("FUNDING", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("POSITION P&L", { exact: true }).first()).toBeVisible();
+  const market = page.getByRole("region", { name: "Market overview" });
+  await expect(market.getByText("CURRENT MARKET PRICE", { exact: true })).toBeVisible();
+  await expect(market.getByText("FUNDING", { exact: true })).toBeVisible();
+  await expect(market.getByText("POSITION P&L", { exact: true })).toBeVisible();
   await expect(page.getByText(/acts when every active condition is true/i)).toBeVisible();
   await expect(page.getByText(/capital/i).first()).toBeVisible();
   await expect(page.getByText(/DEMO FEED/i).first()).toBeVisible();
@@ -188,4 +189,49 @@ test("core routes stay inside interaction and navigation budgets", async ({ page
     expect(timing.domContentLoadedMs, `${item.path} DOM budget`).toBeLessThan(3_000);
     expect(timing.responseMs, `${item.path} response budget`).toBeLessThan(1_500);
   }
+});
+
+test("phase 30 keeps navigation calm and market detail progressive", async ({ page }, testInfo) => {
+  await page.goto("/trade");
+  await expect(page.getByRole("heading", { name: /^SOL \/ USDC$/ })).toBeVisible();
+
+  const home = page.getByRole("link", { name: "Go to Triggerlane home" });
+  await expect(home).toHaveAttribute("href", "/");
+  await home.click();
+  await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
+
+  await page.goto("/trade");
+  await page.getByRole("button", { name: "Open Simulation settings" }).click();
+  const simulation = page.getByRole("dialog", { name: "Simulation and data settings" });
+  await expect(simulation).toBeVisible();
+  await expect(simulation.getByRole("group", { name: "Market data mode" })).toBeVisible();
+  await expect(simulation.getByText("EXECUTION ELIGIBLE", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("simulation-menu-desktop.png"), animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await expect(simulation).toBeHidden();
+
+  await page.getByRole("button", { name: "Open account" }).click();
+  const account = page.getByRole("dialog", { name: "Account" });
+  await expect(account).toBeVisible();
+  await expect(account.getByText("ACCOUNT", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("account-menu-desktop.png"), animations: "disabled" });
+  await account.getByRole("button", { name: "NEW HERE?" }).click();
+  await expect(page.getByRole("dialog", { name: "Build one clear trigger" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(page.locator(".signal-ribbon")).toHaveCount(0);
+  await expect(page.locator(".market-context-funding")).toContainText("FUNDING");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const details = page.getByRole("button", { name: "MARKET DETAILS" });
+  await expect(details).toBeVisible();
+  await expect(details).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".market-context-pnl")).toBeVisible();
+  await expect(page.locator(".market-context-funding")).toBeHidden();
+  await expect(page.locator(".market-context-updated")).toBeHidden();
+  await details.click();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".market-context")).toHaveClass(/open/);
+  await expect(page.locator(".market-context-funding")).toBeVisible();
+  await expect(page.locator(".market-context-updated")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("market-details-phone.png"), animations: "disabled" });
 });

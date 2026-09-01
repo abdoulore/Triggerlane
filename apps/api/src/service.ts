@@ -592,7 +592,7 @@ export class GhostService {
     );
 
     return {
-      identity: { id: userId, label: `Simulation ${userId.slice(0, 4).toUpperCase()}` },
+      identity: { id: userId, label: `Account ${userId.slice(0, 4).toUpperCase()}` },
       portfolio: {
         id: portfolio.id,
         dataMode: portfolio.data_mode,

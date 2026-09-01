@@ -389,7 +389,7 @@ function ghostWaitingReason(ghost: GhostRecord | undefined, evaluations: Evaluat
 
 function Logo() {
   return (
-    <a className="brand" href="/trade" aria-label="Triggerlane Trade">
+    <a className="brand" href="/" aria-label="Go to Triggerlane home">
       <span className="brand-mark"><BrandIcon weight="duotone" size={19} /></span>
       <span><b>TRIGGERLANE</b><small>CONDITIONAL TRADING</small></span>
     </a>
@@ -438,17 +438,6 @@ function CompactSignalEngine({ evaluations, ghost }: { evaluations: Evaluation[]
       <ArrowRight size={18} />
       <div className="compact-engine-action"><span>{complete ? "READY TO EXECUTE" : "ACTION IF READY"}</span><b>{action}</b><small>{ghost ? "FIRES ONCE" : "PREVIEW ONLY"}</small></div>
     </div>
-  </section>;
-}
-
-function SignalRibbon({ price, funding, pnl, frame, modeIsLive, provider }: { price: number; funding: string; pnl: string; frame: Frame; modeIsLive: boolean; provider?: string }) {
-  const observedAt = modeIsLive ? frame.assembledAt : frame.observations.PRICE.sourceTimestamp ?? frame.observations.PRICE.receivedAt;
-  return <section className="signal-ribbon" aria-label="Market signal status">
-    <div><span>PRICE</span><b>${money.format(price)}</b><small>SOL / USDC</small></div>
-    <div><span>FUNDING</span><b>{Number(funding) >= 0 ? "+" : ""}{(Number(funding) * 100).toFixed(3)}%</b><small>8H ESTIMATE</small></div>
-    <div><span>POSITION P&amp;L</span><b className={Number(pnl) >= 0 ? "positive" : "negative"}>{(Number(pnl) * 100).toFixed(1)}%</b><small>FRAME DERIVED</small></div>
-    <div><span>FRESHNESS</span><b className={frame.completeness === "COMPLETE" ? "positive" : "warning-text"}>{frame.completeness}</b><small>{ageLabel(observedAt)}</small></div>
-    <div className="signal-provenance"><Database size={16} /><span>PROVENANCE</span><b>{modeIsLive ? "LIVE · VIEW ONLY" : "DEMO · ELIGIBLE"}</b><small>{providerLabel(modeIsLive ? provider ?? "QUALIFIED LIVE FEED" : frame.observations.PRICE.provider)}</small></div>
   </section>;
 }
 
@@ -775,6 +764,7 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [marketDetailsOpen, setMarketDetailsOpen] = useState(false);
   useEffect(() => {
     if (!composerOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -793,6 +783,7 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
   const price = Number(modeIsLive && live ? live.price : workspace.frame.observations.PRICE.value);
   const funding = modeIsLive && live ? live.funding : workspace.frame.observations.FUNDING.value;
   const pnl = workspace.frame.observations.PNL.value;
+  const observedAt = modeIsLive ? workspace.frame.assembledAt : workspace.frame.observations.PRICE.sourceTimestamp ?? workspace.frame.observations.PRICE.receivedAt;
   const evaluations = selected?.evaluations?.length ? selected.evaluations : initialComposer.conditions.map((condition) => evaluateCondition(condition, workspace.frame.observations[condition.metric].value));
   const ready = evaluations.filter((item) => item.satisfied).length;
   const conditionCount = evaluations.length;
@@ -803,12 +794,16 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
     <div className="trade-layout phase-25-trade">
       <div id="portfolio"><PortfolioRail workspace={workspace} price={price} /></div>
       <main className="market-workspace">
-        <section className="market-header">
+        <section className="market-header" aria-label="Market overview">
           <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL <i>/</i> USDC</h1></div></div>
           <div className="market-price"><span>CURRENT MARKET PRICE</span><motion.strong key={price} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>${money.format(price)}</motion.strong><small className="positive">+4.84% TODAY</small></div>
-          <div className={`execution-mode ${modeIsLive ? "monitor" : ""}`}><i /><span>{modeIsLive ? "MONITORING ONLY" : "SIMULATED EXECUTION"}</span><b>{modeIsLive ? "LIVE DATA" : "DEMO FEED"}</b></div>
+          <div className={`market-context ${marketDetailsOpen ? "open" : ""}`}>
+            <div className="market-context-funding"><span>FUNDING</span><b>{Number(funding) >= 0 ? "+" : ""}{(Number(funding) * 100).toFixed(3)}%</b><small>8H ESTIMATE</small></div>
+            <div className="market-context-pnl"><span>POSITION P&amp;L</span><b className={Number(pnl) >= 0 ? "positive" : "negative"}>{(Number(pnl) * 100).toFixed(1)}%</b><small>FRAME DERIVED</small></div>
+            <div className="market-context-updated"><span>UPDATED</span><b>{ageLabel(observedAt)}</b><small>{modeIsLive ? "LIVE OBSERVATION" : "DEMO FRAME"}</small></div>
+          </div>
+          <button className="market-details-toggle" aria-expanded={marketDetailsOpen} onClick={() => setMarketDetailsOpen((value) => !value)}>MARKET DETAILS<CaretRight size={14} /></button>
         </section>
-        <SignalRibbon price={price} funding={funding} pnl={pnl} frame={workspace.frame} modeIsLive={modeIsLive} provider={live?.provider} />
         <section className="chart-zone">
           <div className="chart-toolbar"><div><button className="active">1M</button><button>5M</button><button>1H</button></div><div><Crosshair size={16} /><span>{modeIsLive ? "HYPERLIQUID MARK" : "DETERMINISTIC PATH"}</span></div></div>
           <MarketChart price={price} />
@@ -1265,27 +1260,6 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
   );
 }
 
-function ConnectionDrawer({ id, workspace, live, liveError, diagnostics, sourceAge, close }: { id: string; workspace: Workspace; live?: LiveMarket; liveError: boolean; diagnostics?: Diagnostics; sourceAge: string; close: () => void }) {
-  const modeIsLive = workspace.portfolio.dataMode === "LIVE";
-  const observation = workspace.frame.observations;
-  const provider = providerLabel(modeIsLive ? live?.provider ?? "Hyperliquid" : observation.PRICE.provider);
-  const feedStatus = liveError ? "UNAVAILABLE" : modeIsLive ? "MONITORING ONLY" : "CONNECTED";
-  const sourceTime = modeIsLive ? "SOURCE TIME UNAVAILABLE" : dateTime(observation.PRICE.sourceTimestamp ?? observation.PRICE.receivedAt);
-  const engineStatus = diagnostics?.workerLease.active ? "OPERATIONAL" : diagnostics ? "RECONNECTING" : "CHECKING";
-  return <motion.aside id={id} className="connection-drawer" role="dialog" aria-modal="true" aria-labelledby="connections-title" initial={{ x: 32, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }}>
-    <div className="drawer-heading"><div><span className="eyebrow">SYSTEM HEALTH</span><h2 id="connections-title">Connections</h2></div><button className="icon-button" title="Close connections" onClick={close}><X size={18} /></button></div>
-    <div className="drawer-mode"><span className={modeIsLive ? "amber-dot" : "green-dot"} /><div><small>DATA MODE</small><b>{modeIsLive ? "Live Data" : "Demo Feed"}</b></div><strong>{modeIsLive ? "MONITORING" : "EXECUTION ELIGIBLE"}</strong></div>
-    <section className="connection-list">
-      <div><span><Broadcast size={18} /><i>PRICE FEED</i></span><b>{feedStatus}</b><small>{provider} · {sourceTime} · received {sourceAge}s ago</small></div>
-      <div><span><Pulse size={18} /><i>FUNDING FEED</i></span><b>{feedStatus}</b><small>{provider} · {sourceTime} · received {sourceAge}s ago</small></div>
-      <div><span><BrandIcon size={18} /><i>TRIGGER ENGINE</i></span><b>{engineStatus}</b><small>{diagnostics?.workerLease.active ? `Worker ${diagnostics.workerLease.owner ?? "active"}` : "Waiting for worker lease"} · {diagnostics?.outboxPending ?? 0} events pending</small></div>
-      <div><span><Lightning size={18} /><i>SIMULATED EXECUTION</i></span><b>{modeIsLive ? "DISABLED" : "AVAILABLE"}</b><small>{modeIsLive ? "Live observations cannot settle capital" : `${diagnostics?.executionAttemptsInFlight ?? 0} attempts in flight · ledger-backed`}</small></div>
-    </section>
-    {modeIsLive && <div className="drawer-warning"><Warning size={17} /><div><b>Monitoring only</b><p>The provider does not expose a trustworthy source timestamp. No trigger can execute from this feed.</p></div></div>}
-    <p className="drawer-foot">Statuses are based on current provider capability and service diagnostics. Rialo remains unavailable and is not reported as connected.</p>
-  </motion.aside>;
-}
-
 function OnboardingPanel({ view, close }: { view: AppView; close: () => void }) {
   const guide = onboardingByView[view];
   return <motion.aside id="onboarding-panel" className="onboarding-panel" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" initial={{ x: 32, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }}>
@@ -1343,6 +1317,10 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
   const capabilities = capabilitiesQuery.data ?? { environment: "development", executionMode: "SANDBOX", features: { aiComposer: true, replay: true, multiStage: false, rialo: false, demoFeed: true, advancedConditions: false } };
   const sourceAge = modeIsLive && liveQuery.data ? Math.max(0, (Date.now() - new Date(liveQuery.data.receivedAt).getTime()) / 1000).toFixed(1) : Math.max(0, (Date.now() - new Date(workspace.frame.assembledAt).getTime()) / 1000).toFixed(0);
+  const provider = providerLabel(modeIsLive ? liveQuery.data?.provider ?? "Hyperliquid" : workspace.frame.observations.PRICE.provider);
+  const feedStatus = liveQuery.isError ? "UNAVAILABLE" : modeIsLive ? "MONITORING ONLY" : "CONNECTED";
+  const sourceTime = modeIsLive ? "SOURCE TIME UNAVAILABLE" : dateTime(workspace.frame.observations.PRICE.sourceTimestamp ?? workspace.frame.observations.PRICE.receivedAt);
+  const engineStatus = diagnosticsQuery.data?.workerLease.active ? "OPERATIONAL" : diagnosticsQuery.data ? "RECONNECTING" : "CHECKING";
 
   return (
     <AppShell>
@@ -1350,15 +1328,20 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
         <Logo />
         <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers<span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length || ""}</span></a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
         <div className="header-tools">
-          <button className="onboarding-button" aria-label="Open contextual beginner guide" aria-expanded={onboardingOpen} aria-controls="onboarding-panel" onClick={() => { setOnboardingOpen((value) => !value); setConnectionsOpen(false); setAccountOpen(false); }}><Question size={17} /><span>NEW HERE?</span></button>
-          <div className="mode-switch" role="group" aria-label="Market data mode"><button aria-pressed={!modeIsLive} className={!modeIsLive ? "active" : ""} onClick={() => setMode.mutate("DEMO")}>SIMULATION</button><button aria-pressed={modeIsLive} className={modeIsLive ? "active" : ""} onClick={() => setMode.mutate("LIVE")}>LIVE DATA</button></div>
-          <button className={`connection-pill ${modeIsLive ? "monitoring" : ""}`} aria-expanded={connectionsOpen} aria-controls="connection-drawer" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setOnboardingOpen(false); }}><i />{modeIsLive ? "LIVE MONITORING" : "SIMULATED EXECUTION"}<CaretRight size={14} /></button>
-          <button className="account-button" aria-label="Open simulation profile" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">SIM PROFILE</span><CaretRight size={14} /></button>
+          <button className={`environment-button ${modeIsLive ? "monitoring" : ""}`} aria-label={`Open ${modeIsLive ? "Live monitoring" : "Simulation"} settings`} aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setOnboardingOpen(false); }}><i /><span>{modeIsLive ? "LIVE MONITORING" : "SIMULATION"}</span><CaretRight size={14} /></button>
+          <button className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>
         </div>
       </header>
+      <AnimatePresence>{(connectionsOpen || accountOpen) && <motion.button className="menu-backdrop" aria-label="Close open menu" onClick={() => { setConnectionsOpen(false); setAccountOpen(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
       <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => setOnboardingOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view} close={() => setOnboardingOpen(false)} /></>}</AnimatePresence>
-      <AnimatePresence>{connectionsOpen && <><motion.button className="drawer-backdrop" aria-label="Close connections" onClick={() => setConnectionsOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><ConnectionDrawer id="connection-drawer" workspace={workspace} live={liveQuery.data} liveError={liveQuery.isError} diagnostics={diagnosticsQuery.data} sourceAge={sourceAge} close={() => setConnectionsOpen(false)} /></>}</AnimatePresence>
-      <AnimatePresence>{accountOpen && <motion.div id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Simulation profile" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">SIMULATION PROFILE</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setConnectionsOpen(true); }}><Broadcast size={16} />CONNECTIONS</button><button onClick={() => clearSession.mutate()}><Power size={16} />CLEAR SESSION</button></motion.div>}</AnimatePresence>
+      <AnimatePresence>{connectionsOpen && <motion.div id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Simulation and data settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+        <div className="simulation-menu-heading"><div><span className="eyebrow">ENVIRONMENT</span><strong>{modeIsLive ? "Live monitoring" : "Simulation"}</strong></div><span className={modeIsLive ? "monitoring" : "eligible"}>{modeIsLive ? "VIEW ONLY" : "EXECUTION ELIGIBLE"}</span></div>
+        <div className="simulation-mode-switch" role="group" aria-label="Market data mode"><button aria-pressed={!modeIsLive} className={!modeIsLive ? "active" : ""} onClick={() => setMode.mutate("DEMO")}>SIMULATION</button><button aria-pressed={modeIsLive} className={modeIsLive ? "active" : ""} onClick={() => setMode.mutate("LIVE")}>LIVE DATA</button></div>
+        {modeIsLive && <div className="simulation-warning"><Warning size={16} /><span><b>Monitoring only</b><small>Live observations cannot execute or settle simulated capital.</small></span></div>}
+        <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Freshness</dt><dd>{sourceAge}s ago</dd></div><div><dt>Frame</dt><dd>{workspace.frame.completeness}</dd></div></dl>
+        <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>{modeIsLive ? "DISABLED" : "SIMULATED · AVAILABLE"}</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
+      </motion.div>}</AnimatePresence>
+      <AnimatePresence>{accountOpen && <motion.div id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button><button className="account-danger" onClick={() => clearSession.mutate()}><Power size={16} />CLEAR SESSION</button></motion.div>}</AnimatePresence>
       {view === "trade" && <TradeView workspace={workspace} live={liveQuery.data} capabilities={capabilities} />}
       {view === "ghosts" && <GhostsView workspace={workspace} />}
       {view === "portfolio" && <PortfolioView workspace={workspace} />}
