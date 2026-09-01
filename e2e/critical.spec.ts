@@ -402,13 +402,16 @@ test("Replay runs complete historical frames and exposes trigger inspection", as
 test("Discover explains, replays, and hands off a supported strategy without arming it", async ({ page }, testInfo) => {
   await page.goto("/discover");
   await expect(page.getByRole("heading", { name: "Start with a moment worth watching" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Why watch several signals?" })).toBeVisible();
+  await expect(page.getByText("Every chosen signal must be true together.")).toBeVisible();
   const beforeCount = await page.evaluate(async () => ((await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
   const preview = page.locator("#strategy-preview");
   await expect(preview.getByRole("heading", { name: "Buy the Fear" })).toBeVisible();
+  await expect(preview.getByText("Stress alignment", { exact: true })).toBeVisible();
   await expect(preview.getByText("ALL MUST BE TRUE IN ONE FRAME")).toBeVisible();
   await expect(preview.locator(".lattice-condition")).toHaveCount(3);
   await expect(preview.getByText("CAPITAL IF ARMED")).toBeVisible();
-  await expect(preview.getByText("Loading creates an editable draft only.")).toBeVisible();
+  await expect(preview.getByText("Only you can save or start the trigger after reviewing it in Composer.")).toBeVisible();
   await expect(page.getByRole("button", { name: "PRICE" })).toBeVisible();
   await expect(page.getByRole("button", { name: "FUNDING" })).toBeVisible();
   await expect(page.getByRole("button", { name: "POSITION P&L" })).toBeVisible();
@@ -423,17 +426,22 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   expect(typeSizes.intro).toBeGreaterThanOrEqual(16);
   expect(typeSizes.strategy).toBeGreaterThanOrEqual(44);
   expect(typeSizes.body).toBeGreaterThanOrEqual(15);
+  await page.screenshot({ path: testInfo.outputPath("discover-phase28-desktop-top.png"), fullPage: false });
 
   await preview.getByRole("button", { name: "REPLAY LAST 24H" }).click();
   const replay = page.getByRole("region", { name: "24 hour deterministic Replay result" });
-  await expect(replay.getByText("24H DETERMINISTIC REPLAY")).toBeVisible();
+  await expect(replay.getByText("WHAT DEMO HISTORY SHOWED")).toBeVisible();
   await expect(replay.getByText("FRAMES CHECKED")).toBeVisible();
   await expect(replay).toContainText("24");
-  await expect(replay).toContainText("No order was created and no capital was reserved.");
+  await expect(replay).toContainText("Your Simulation did not change");
+  await expect(replay).toContainText("No trigger was created and no capital was reserved.");
+  const afterReplayCount = await page.evaluate(async () => ((await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
+  expect(afterReplayCount).toBe(beforeCount);
 
   await page.getByRole("button", { name: /Downside Break/i }).click();
   await expect(preview.getByRole("heading", { name: "Downside Break" })).toBeVisible();
   await expect(preview.locator(".strategy-feature-copy").getByText("SELL SOL", { exact: true })).toBeVisible();
+  await expect(preview.getByText("Risk alignment", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "Advanced" }).click();
   const advanced = page.locator(".advanced-boundary");
@@ -444,6 +452,7 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   await page.getByRole("tab", { name: "Popular" }).click();
   await page.getByRole("button", { name: /Euphoria Exit/i }).click();
   await expect(preview.getByRole("heading", { name: "Euphoria Exit" })).toBeVisible();
+  await expect(preview.getByText("Heat alignment", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("discover-editorial-desktop.png"), fullPage: true });
 
   await preview.getByRole("button", { name: "LOAD INTO COMPOSER FOR REVIEW" }).click();
@@ -458,6 +467,12 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   expect(afterCount).toBe(beforeCount);
 
   await page.goto("/discover");
+  await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+  const guide = page.getByRole("dialog", { name: "Learn before you build" });
+  await expect(guide).toContainText("Replay explores demo history");
+  const guideAccessibility = await new AxeBuilder({ page }).include(".onboarding-panel").withTags(["wcag2a", "wcag2aa"]).analyze();
+  expect(guideAccessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
+  await page.getByTitle("Close guide").click();
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious).toEqual([]);
@@ -467,10 +482,24 @@ test("Discover remains composed on a phone", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/discover");
   await expect(page.getByRole("heading", { name: "Start with a moment worth watching" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Why watch several signals?" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-top.png"), fullPage: false });
   await expect(page.locator("#strategy-preview").getByRole("heading", { name: "Buy the Fear" })).toBeVisible();
   await expect(page.locator(".strategy-lattice-mobile")).toBeVisible();
   await expect(page.locator(".strategy-lattice-desktop")).toBeHidden();
   await expect(page.locator(".mobile-lattice-signal")).toHaveCount(3);
+  await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+  await expect(page.getByRole("dialog", { name: "Learn before you build" })).toBeVisible();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-guide.png"), fullPage: false });
+  await page.getByTitle("Close guide").click();
+  const preview = page.locator("#strategy-preview");
+  await preview.getByRole("button", { name: "REPLAY LAST 24H" }).click();
+  const replay = page.getByRole("region", { name: "24 hour deterministic Replay result" });
+  await replay.scrollIntoViewIfNeeded();
+  await expect(replay.getByText("Your Simulation did not change")).toBeVisible();
+  await expect(replay.getByRole("button", { name: /REVIEW BUY THE FEAR IN COMPOSER/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-replay.png"), fullPage: false });
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
   const mobileSignalsFit = await page.locator(".mobile-lattice-signal").evaluateAll((signals) => signals.every((signal) => {
@@ -479,6 +508,18 @@ test("Discover remains composed on a phone", async ({ page }, testInfo) => {
   }));
   expect(mobileSignalsFit).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("discover-editorial-mobile.png"), fullPage: true });
+});
+
+test("contextual beginner help follows the current product task", async ({ page }) => {
+  for (const [path, title] of [["/trade", "Build one clear trigger"], ["/ghosts", "Read triggers by attention"], ["/portfolio", "Follow every virtual dollar"], ["/history", "Read the outcome first"]]) {
+    await page.goto(path);
+    await page.getByRole("button", { name: "Open contextual beginner guide" }).click();
+    const guide = page.getByRole("dialog", { name: title });
+    await expect(guide).toBeVisible();
+    await expect(guide).toContainText("Simulation stays in your control");
+    await page.keyboard.press("Escape");
+    await expect(guide).toBeHidden();
+  }
 });
 
 test("Ghosts and History keep the welcoming reading hierarchy", async ({ page }) => {
