@@ -673,7 +673,7 @@ body { font-size: 14px; }
   .composer-panel { padding: 14px; }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1100px) {
   .landing-hero { min-height: 820px; }
   .hero-copy { top: 43%; width: 70vw; }
   .hero-readout { width: 70vw; }
@@ -1670,15 +1670,15 @@ body { font-size: 14px; }
 .phase-25-trade .primary-action { min-height: 54px; font-size: 13px; }
 
 @media (max-width: 1280px) {
-  .phase-25-trade { grid-template-columns: 190px minmax(520px, 1fr) 390px; }
+  .phase-25-trade { grid-template-columns: 176px minmax(450px, 1fr) 360px; }
   .phase-25-trade .composer-panel { padding: 18px; }
   .phase-25-trade .builder-row { grid-template-columns: 22px minmax(100px, 1fr) 84px 94px; }
   .compact-engine-flow { grid-template-columns: minmax(170px, 1fr) 62px 18px minmax(135px, .7fr); }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1100px) {
   .phase-25-trade { display: block; }
-  .phase-25-trade .composer-panel { display: grid; }
+  .phase-25-trade .composer-panel { display: block; }
   .phase-25-trade .compact-signal-engine { margin-top: 4px; }
 }
 

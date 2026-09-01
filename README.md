@@ -7,7 +7,9 @@ Triggerlane is a conditional trading simulation for building one-shot SOL/USDC o
 > [!IMPORTANT]
 > Triggerlane currently uses simulated capital and simulated execution. Live market data is monitoring-only. No real assets move, and the Rialo execution target is not configured.
 
-![Triggerlane landing experience](docs/assets/screenshots/landing.png)
+[Open the live Triggerlane Simulation](https://triggerlane.up.railway.app/)
+
+![Triggerlane landing experience](docs/assets/screenshots/triggerlane-hero-desktop.png)
 
 ## Why Triggerlane
 
@@ -26,7 +28,11 @@ The current build is intentionally narrow: one market, a small qualified signal 
 
 | Trade | Trigger detail |
 | --- | --- |
-| ![Triggerlane trade workspace](docs/assets/screenshots/trade.png) | ![Triggerlane trigger detail](docs/assets/screenshots/trigger-detail.png) |
+| ![Triggerlane trade workspace](docs/assets/screenshots/trade-legibility-desktop.png) | ![Triggerlane trigger detail](docs/assets/screenshots/ghost-detail-desktop.png) |
+| **Discover** | **Triggers** |
+| ![Triggerlane strategy discovery](docs/assets/screenshots/discover-phase28-desktop-top.png) | ![Triggerlane trigger command center](docs/assets/screenshots/ghost-command-center-desktop.png) |
+| **Portfolio** | **History evidence** |
+| ![Triggerlane portfolio reconciliation](docs/assets/screenshots/portfolio-desktop.png) | ![Triggerlane blocked execution evidence](docs/assets/screenshots/history-blocked-audit-desktop.png) |
 
 ### Core experiences
 
@@ -35,7 +41,7 @@ The current build is intentionally narrow: one market, a small qualified signal 
 - **Trigger detail:** inspect the current condition frame, lifecycle, exact observations, activity, and receipt.
 - **Portfolio:** reconcile available and reserved virtual balances against an immutable local ledger.
 - **History:** review fills, blocked attempts, cancellations, expirations, and their evidence.
-- **Discover:** load supported strategy examples into an editable composer.
+- **Discover:** learn why multiple signals may matter, replay supported teaching examples, then load an editable draft for review.
 - **Replay:** test the same trigger against deterministic 24-hour, 7-day, or 30-day demo history.
 
 ## Ninety-Second Demo
@@ -156,7 +162,7 @@ scripts/        Build-budget checks
 
 ## Quality Gate
 
-The automated suite covers condition evaluation, idempotent mutations, reservation conflicts, stale and out-of-order data, restart recovery, one-time settlement, ledger integrity, responsive layouts, accessibility, reduced motion, non-WebGL fallbacks, and production bundle budgets.
+The automated suite covers condition evaluation, idempotent mutations, reservation conflicts, stale and out-of-order data, restart recovery, one-time settlement, ledger integrity, seven release viewports from 360px to 1920px, accessibility, reduced motion, non-WebGL fallbacks, and production bundle budgets.
 
 Read [Launch Audit](docs/LAUNCH_AUDIT.md) for the exact contract.
 

@@ -25,7 +25,7 @@ const draft = {
 
 async function createGhost(page: Page) {
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^SOL \/ USDC$/ })).toBeVisible({ timeout: 15_000 });
   return page.evaluate(async (payload) => {
     const response = await fetch("http://127.0.0.1:8787/api/ghosts", {
       method: "POST",
@@ -43,20 +43,30 @@ async function seriousAxeViolations(page: Page) {
 }
 
 for (const viewport of [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "tablet", width: 820, height: 1180 },
-  { name: "mobile", width: 390, height: 844 },
+  { name: "phone-360", width: 360, height: 800 },
+  { name: "phone-390", width: 390, height: 844 },
+  { name: "phone-430", width: 430, height: 932 },
+  { name: "tablet-820", width: 820, height: 1180 },
+  { name: "desktop-1024", width: 1024, height: 768 },
+  { name: "desktop-1440", width: 1440, height: 900 },
+  { name: "desktop-1920", width: 1920, height: 1080 },
 ] as const) {
   test(`visual launch audit at ${viewport.name}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     await page.emulateMedia({ reducedMotion: "reduce" });
-    for (const item of productPages) {
+    const ghost = await createGhost(page);
+    const visualPages = [
+      { path: "/", heading: "Trade the whole moment.", slug: "landing" },
+      ...productPages.map((item) => ({ ...item, slug: item.path.slice(1) })),
+      { path: `/ghost/${ghost.id}`, heading: draft.name, slug: "trigger-detail" },
+    ];
+    for (const item of visualPages) {
       await page.goto(item.path);
       await expect(page.getByRole("heading", { name: item.heading })).toBeVisible();
       await expect(page.locator("main")).toBeVisible();
       const width = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
       expect(width.document, `${item.path} overflows at ${viewport.name}`).toBeLessThanOrEqual(width.viewport);
-      await page.screenshot({ path: testInfo.outputPath(`${item.path.slice(1)}-${viewport.name}.png`), fullPage: true, animations: "disabled" });
+      await page.screenshot({ path: testInfo.outputPath(`${item.slug}-${viewport.name}.png`), fullPage: true, animations: "disabled" });
     }
   });
 }
