@@ -156,7 +156,13 @@ function publicGhost(row: GhostRow) {
 export class GhostService {
   private readonly executionAdapters = [new SandboxAutomationAdapter(), new RialoAutomationAdapter()];
 
-  constructor(private readonly database: PGlite) {}
+  constructor(
+    private readonly database: PGlite,
+    private readonly lifecycleHooks: {
+      beforePortfolioReplacement?: () => void | Promise<void>;
+      beforeSettlementCommit?: () => void | Promise<void>;
+    } = {},
+  ) {}
 
   executionTargets() {
     return {
@@ -307,6 +313,25 @@ export class GhostService {
       const timestamp = now();
       const portfolioId = randomUUID();
       const ledgerId = randomUUID();
+      const cancellable = await rows<GhostRow>(
+        tx,
+        "SELECT * FROM ghosts WHERE user_id=$1 AND portfolio_id=$2 AND status IN ('DRAFT','ARMED','WATCHING','PAUSED') ORDER BY created_at",
+        [userId, current.id],
+      );
+      for (const ghost of cancellable) {
+        if (ghost.reservation_id) await this.releaseReservation(tx, ghost.reservation_id, "PORTFOLIO_RESET");
+        const cancelled = await tx.query(
+          "UPDATE ghosts SET status='CANCELLED', pause_reason=NULL, cancelled_at=$1, updated_at=$1 WHERE id=$2 AND portfolio_id=$3 AND status IN ('DRAFT','ARMED','WATCHING','PAUSED') RETURNING id",
+          [timestamp, ghost.id, current.id],
+        );
+        if (cancelled.rows[0]) {
+          await this.addActivity(tx, userId, ghost.id, "CANCELLED", "Trigger cancelled by portfolio reset. Reserved capital released.", {
+            portfolioId: current.id,
+            generation: current.generation,
+          });
+        }
+      }
+      await this.lifecycleHooks.beforePortfolioReplacement?.();
       await tx.query("UPDATE portfolios SET status='ARCHIVED', updated_at=$1 WHERE id=$2", [timestamp, current.id]);
       await tx.query("INSERT INTO portfolios (id,user_id,generation,status,data_mode,demo_step,version,created_at,updated_at) VALUES ($1,$2,$3,'ACTIVE','DEMO',0,1,$4,$4)", [portfolioId, userId, current.generation + 1, timestamp]);
       await tx.query("INSERT INTO balances (id,portfolio_id,asset,quantity_decimal,cost_basis_usdc_decimal,version,updated_at) VALUES ($1,$2,'USDC',15000,NULL,1,$3),($4,$2,'SOL',40,10000,1,$3)", [randomUUID(), portfolioId, timestamp, randomUUID()]);
@@ -341,16 +366,16 @@ export class GhostService {
 
   async updateGhost(userId: string, ghostId: string, payload: unknown) {
     const request = z.object({ expectedConfigurationVersion: z.number().int().positive(), draft: ghostDraftSchema }).parse(payload);
-    const existing = await one<GhostRow>(this.database, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2", [ghostId, userId]);
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const existing = await one<GhostRow>(this.database, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2 AND portfolio_id = $3", [ghostId, userId, portfolio.id]);
     if (!existing) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
     if (existing.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only a draft trigger can be edited.", 409);
     if (existing.configuration_version !== request.expectedConfigurationVersion) throw new AppError("CONFIGURATION_CONFLICT", "This trigger changed since it was opened. Refresh and try again.", 409);
-    const portfolio = await this.activePortfolio(this.database, userId);
     const frame = await this.latestFrame(this.database, portfolio.id);
     if (!frame) throw new AppError("FRAME_NOT_FOUND", "Market frame is not ready.", 503);
     const evaluations = evaluateGhost(request.draft.conditions, frame);
     const expiresAt = new Date(Date.now() + request.draft.expiresInHours * 60 * 60 * 1000).toISOString();
-    await this.database.query(`UPDATE ghosts SET name=$1, side=$2, amount_decimal=$3, amount_type=$4, max_slippage_bps=$5, expires_at=$6, conditions=$7, evaluations=$8, configuration_version=configuration_version+1, trigger_proximity=$9, updated_at=NOW() WHERE id=$10 AND user_id=$11`, [request.draft.name, request.draft.side, request.draft.amount, request.draft.amountType, request.draft.maxSlippageBps, expiresAt, JSON.stringify(request.draft.conditions), JSON.stringify(evaluations), evaluations.filter((item) => item.satisfied).length / evaluations.length, ghostId, userId]);
+    await this.database.query(`UPDATE ghosts SET name=$1, side=$2, amount_decimal=$3, amount_type=$4, max_slippage_bps=$5, expires_at=$6, conditions=$7, evaluations=$8, configuration_version=configuration_version+1, trigger_proximity=$9, updated_at=NOW() WHERE id=$10 AND user_id=$11 AND portfolio_id=$12`, [request.draft.name, request.draft.side, request.draft.amount, request.draft.amountType, request.draft.maxSlippageBps, expiresAt, JSON.stringify(request.draft.conditions), JSON.stringify(evaluations), evaluations.filter((item) => item.satisfied).length / evaluations.length, ghostId, userId, portfolio.id]);
     await this.addActivity(this.database, userId, ghostId, "CONFIGURATION_UPDATED", "Draft configuration updated.", { configurationVersion: existing.configuration_version + 1 });
     return this.ghost(userId, ghostId);
   }
@@ -380,6 +405,120 @@ export class GhostService {
       [ownerId, ttlSeconds],
     );
     return Boolean(result.rows[0]);
+  }
+
+  async runMaintenanceTick(
+    ownerId: string,
+    publish: (userId: string, event: Record<string, unknown>) => void,
+  ): Promise<{ leaseAcquired: boolean; expired: number; published: number }> {
+    if (!(await this.acquireWorkerLease(ownerId))) return { leaseAcquired: false, expired: 0, published: 0 };
+    const expired = await this.expireDueGhosts();
+    const published = await this.publishOutbox(publish);
+    return { leaseAcquired: true, expired, published };
+  }
+
+  async expireDueGhosts(limit = 100): Promise<number> {
+    const batchSize = Math.max(1, Math.min(Math.trunc(limit), 500));
+    return this.database.transaction(async (tx) => {
+      const due = await rows<GhostRow>(
+        tx,
+        `SELECT g.* FROM ghosts g
+         JOIN portfolios p ON p.id = g.portfolio_id
+         WHERE p.status = 'ACTIVE'
+           AND g.status IN ('DRAFT','ARMED','WATCHING','PAUSED')
+           AND g.expires_at <= NOW()
+           AND NOT EXISTS (
+             SELECT 1 FROM execution_attempts ea
+             WHERE ea.ghost_id = g.id AND ea.status IN ('LOCKED','SETTLING')
+           )
+         ORDER BY g.expires_at, g.id
+         LIMIT $1`,
+        [batchSize],
+      );
+      let expired = 0;
+      for (const ghost of due) {
+        const updated = await tx.query(
+          `UPDATE ghosts SET status='EXPIRED', pause_reason=NULL, updated_at=NOW()
+           WHERE id=$1 AND portfolio_id=$2
+             AND status IN ('DRAFT','ARMED','WATCHING','PAUSED')
+             AND expires_at <= NOW()
+             AND NOT EXISTS (
+               SELECT 1 FROM execution_attempts ea
+               WHERE ea.ghost_id = ghosts.id AND ea.status IN ('LOCKED','SETTLING')
+             )
+           RETURNING id`,
+          [ghost.id, ghost.portfolio_id],
+        );
+        if (!updated.rows[0]) continue;
+        if (ghost.reservation_id) await this.releaseReservation(tx, ghost.reservation_id, "GHOST_EXPIRED");
+        await this.addActivity(tx, ghost.user_id, ghost.id, "EXPIRED", "Trigger expired. Reserved capital released.");
+        expired += 1;
+      }
+      return expired;
+    });
+  }
+
+  async integrityReport() {
+    const [ownershipMismatch, reservationMismatch, frameMismatch, executionMismatch, archivedNonterminal, orphanedOpenReservations] = await Promise.all([
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM ghosts g
+         JOIN portfolios p ON p.id=g.portfolio_id
+         WHERE g.user_id <> p.user_id`,
+      ),
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM capital_reservations r
+         JOIN ghosts g ON g.id=r.ghost_id
+         WHERE r.portfolio_id <> g.portfolio_id`,
+      ),
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM execution_attempts ea
+         JOIN ghosts g ON g.id=ea.ghost_id
+         JOIN evaluation_frames f ON f.id=ea.trigger_frame_id
+         WHERE f.portfolio_id <> g.portfolio_id`,
+      ),
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM executions e
+         JOIN ghosts g ON g.id=e.ghost_id
+         JOIN capital_reservations r ON r.id=e.reservation_id
+         JOIN evaluation_frames tf ON tf.id=e.trigger_frame_id
+         JOIN evaluation_frames sf ON sf.id=e.settlement_frame_id
+         WHERE e.portfolio_id <> g.portfolio_id
+            OR e.portfolio_id <> r.portfolio_id
+            OR e.portfolio_id <> tf.portfolio_id
+            OR e.portfolio_id <> sf.portfolio_id`,
+      ),
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM ghosts g
+         JOIN portfolios p ON p.id=g.portfolio_id
+         WHERE p.status='ARCHIVED' AND g.status IN ('DRAFT','ARMED','WATCHING','PAUSED','TRIGGERED','EXECUTING')`,
+      ),
+      one<{ count: string }>(
+        this.database,
+        `SELECT COUNT(*)::text AS count FROM capital_reservations r
+         JOIN ghosts g ON g.id=r.ghost_id
+         JOIN portfolios p ON p.id=r.portfolio_id
+         WHERE r.status IN ('ACTIVE','LOCKED')
+           AND (p.status <> 'ACTIVE' OR g.status NOT IN ('ARMED','WATCHING','PAUSED','TRIGGERED','EXECUTING'))`,
+      ),
+    ]);
+    const violations = {
+      ownershipMismatch: Number(ownershipMismatch?.count ?? 0),
+      reservationPortfolioMismatch: Number(reservationMismatch?.count ?? 0),
+      framePortfolioMismatch: Number(frameMismatch?.count ?? 0),
+      executionPortfolioMismatch: Number(executionMismatch?.count ?? 0),
+      archivedNonterminalGhosts: Number(archivedNonterminal?.count ?? 0),
+      orphanedOpenReservations: Number(orphanedOpenReservations?.count ?? 0),
+    };
+    return {
+      ok: Object.values(violations).every((count) => count === 0),
+      checkedAt: now(),
+      violations,
+    };
   }
 
   private async latestFrame(db: Queryable, portfolioId: string): Promise<EvaluationFrame | null> {
@@ -764,13 +903,16 @@ export class GhostService {
 
   async armGhost(userId: string, ghostId: string, idempotencyKey: string) {
     await this.database.transaction(async (tx) => {
-      const replay = await one<Record<string, unknown>>(tx, "SELECT resource_id FROM idempotency_records WHERE user_id = $1 AND operation = 'ARM_GHOST' AND idempotency_key = $2", [userId, idempotencyKey]);
-      if (replay) return;
+      const replay = await one<{ resource_id: string | null }>(tx, "SELECT resource_id FROM idempotency_records WHERE user_id = $1 AND operation = 'ARM_GHOST' AND idempotency_key = $2", [userId, idempotencyKey]);
+      if (replay) {
+        if (replay.resource_id !== ghostId) throw new AppError("IDEMPOTENCY_KEY_REUSED", "This idempotency key was already used for another trigger.", 409);
+        return;
+      }
       const portfolio = await this.activePortfolio(tx, userId);
       if (portfolio.data_mode !== "DEMO") {
         throw new AppError("LIVE_MONITORING_ONLY", "Switch to Demo Feed to start an executable trigger.", 409);
       }
-      const ghost = await one<GhostRow>(tx, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2", [ghostId, userId]);
+      const ghost = await one<GhostRow>(tx, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2 AND portfolio_id = $3", [ghostId, userId, portfolio.id]);
       if (!ghost) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
       if (ghost.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only a draft trigger can be started.", 409);
       if (new Date(ghost.expires_at).getTime() <= Date.now()) throw new AppError("GHOST_EXPIRED", "This trigger has expired.", 409);
@@ -798,10 +940,11 @@ export class GhostService {
         "INSERT INTO capital_reservation_events (id, reservation_id, from_status, to_status, reason, idempotency_key, created_at) VALUES ($1, $2, NULL, 'ACTIVE', 'GHOST_ARMED', $3, $4)",
         [randomUUID(), reservationId, `reservation:${reservationId}:active`, timestamp],
       );
-      await tx.query(
-        "UPDATE ghosts SET status = 'WATCHING', reservation_id = $1, armed_at = $2, updated_at = $2, was_qualified = FALSE WHERE id = $3",
-        [reservationId, timestamp, ghost.id],
+      const armed = await tx.query(
+        "UPDATE ghosts SET status = 'WATCHING', reservation_id = $1, armed_at = $2, updated_at = $2, was_qualified = FALSE WHERE id = $3 AND portfolio_id=$4 AND status='DRAFT'",
+        [reservationId, timestamp, ghost.id, portfolio.id],
       );
+      if (armed.affectedRows !== 1) throw new AppError("EXECUTION_STATE_CONFLICT", "Trigger state changed before capital could be reserved.", 409);
       await this.addActivity(tx, userId, ghost.id, "ARMED", `${amount.toFixed()} ${asset} reserved.`, {
         reservationId,
         asset,
@@ -834,9 +977,10 @@ export class GhostService {
   }
 
   async pauseGhost(userId: string, ghostId: string) {
+    const portfolio = await this.activePortfolio(this.database, userId);
     const updated = await this.database.query(
-      "UPDATE ghosts SET status = 'PAUSED', pause_reason = 'USER', updated_at = NOW() WHERE id = $1 AND user_id = $2 AND status = 'WATCHING' RETURNING id",
-      [ghostId, userId],
+      "UPDATE ghosts SET status = 'PAUSED', pause_reason = 'USER', updated_at = NOW() WHERE id = $1 AND user_id = $2 AND portfolio_id = $3 AND status = 'WATCHING' RETURNING id",
+      [ghostId, userId, portfolio.id],
     );
     if (!updated.rows[0]) throw new AppError("INVALID_STATE", "Only a watching trigger can be paused.", 409);
     await this.addActivity(this.database, userId, ghostId, "PAUSED", "Paused by user. Reserved capital remains armed.");
@@ -847,8 +991,8 @@ export class GhostService {
     const portfolio = await this.activePortfolio(this.database, userId);
     if (portfolio.data_mode !== "DEMO") throw new AppError("LIVE_MONITORING_ONLY", "Switch to Demo Feed before resuming.", 409);
     const updated = await this.database.query(
-      "UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND status = 'PAUSED' RETURNING id",
-      [ghostId, userId],
+      "UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND portfolio_id = $3 AND status = 'PAUSED' RETURNING id",
+      [ghostId, userId, portfolio.id],
     );
     if (!updated.rows[0]) throw new AppError("INVALID_STATE", "Only a paused trigger can be resumed.", 409);
     await this.addActivity(this.database, userId, ghostId, "RESUMED", "Trigger resumed and awaits a fresh frame.");
@@ -857,25 +1001,20 @@ export class GhostService {
 
   async cancelGhost(userId: string, ghostId: string, idempotencyKey: string) {
     await this.database.transaction(async (tx) => {
-      const replay = await one<Record<string, unknown>>(tx, "SELECT resource_id FROM idempotency_records WHERE user_id = $1 AND operation = 'CANCEL_GHOST' AND idempotency_key = $2", [userId, idempotencyKey]);
-      if (replay) return;
-      const ghost = await one<GhostRow>(tx, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2", [ghostId, userId]);
+      const replay = await one<{ resource_id: string | null }>(tx, "SELECT resource_id FROM idempotency_records WHERE user_id = $1 AND operation = 'CANCEL_GHOST' AND idempotency_key = $2", [userId, idempotencyKey]);
+      if (replay) {
+        if (replay.resource_id !== ghostId) throw new AppError("IDEMPOTENCY_KEY_REUSED", "This idempotency key was already used for another trigger.", 409);
+        return;
+      }
+      const portfolio = await this.activePortfolio(tx, userId);
+      const ghost = await one<GhostRow>(tx, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2 AND portfolio_id = $3", [ghostId, userId, portfolio.id]);
       if (!ghost) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
       if (!["DRAFT", "ARMED", "WATCHING", "PAUSED"].includes(ghost.status)) {
         throw new AppError("INVALID_STATE", "This trigger cannot be cancelled now.", 409);
       }
       const timestamp = now();
-      if (ghost.reservation_id) {
-        const reservation = await one<ReservationRow>(tx, "SELECT * FROM capital_reservations WHERE id = $1", [ghost.reservation_id]);
-        if (reservation && ["ACTIVE", "LOCKED"].includes(reservation.status)) {
-          await tx.query("UPDATE capital_reservations SET status = 'RELEASED', version = version + 1, updated_at = $1 WHERE id = $2", [timestamp, reservation.id]);
-          await tx.query(
-            "INSERT INTO capital_reservation_events (id, reservation_id, from_status, to_status, reason, idempotency_key, created_at) VALUES ($1, $2, $3, 'RELEASED', 'GHOST_CANCELLED', $4, $5)",
-            [randomUUID(), reservation.id, reservation.status, `reservation:${reservation.id}:cancelled`, timestamp],
-          );
-        }
-      }
-      await tx.query("UPDATE ghosts SET status = 'CANCELLED', cancelled_at = $1, updated_at = $1 WHERE id = $2", [timestamp, ghost.id]);
+      if (ghost.reservation_id) await this.releaseReservation(tx, ghost.reservation_id, "GHOST_CANCELLED");
+      await tx.query("UPDATE ghosts SET status = 'CANCELLED', cancelled_at = $1, updated_at = $1 WHERE id = $2 AND portfolio_id = $3", [timestamp, ghost.id, portfolio.id]);
       await this.addActivity(tx, userId, ghost.id, "CANCELLED", "Trigger cancelled. Reserved capital released.");
       await tx.query(
         "INSERT INTO idempotency_records (user_id, operation, idempotency_key, resource_id, created_at) VALUES ($1, 'CANCEL_GHOST', $2, $3, NOW())",
@@ -890,14 +1029,14 @@ export class GhostService {
       const portfolio = await this.activePortfolio(tx, userId);
       await tx.query("UPDATE portfolios SET data_mode = $1, version = version + 1, updated_at = NOW() WHERE id = $2", [mode, portfolio.id]);
       if (mode === "LIVE") {
-        const active = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND status = 'WATCHING'", [userId]);
-        await tx.query("UPDATE ghosts SET status = 'PAUSED', pause_reason = 'LIVE_MONITORING_ONLY', updated_at = NOW() WHERE user_id = $1 AND status = 'WATCHING'", [userId]);
+        const active = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [userId, portfolio.id]);
+        await tx.query("UPDATE ghosts SET status = 'PAUSED', pause_reason = 'LIVE_MONITORING_ONLY', updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [userId, portfolio.id]);
         for (const ghost of active) {
           await this.addActivity(tx, userId, ghost.id, "PAUSED", "Live Data is monitoring-only; execution paused.");
         }
       } else {
-        const paused = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId]);
-        await tx.query("UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId]);
+        const paused = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
+        await tx.query("UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
         for (const ghost of paused) {
           await this.addActivity(tx, userId, ghost.id, "RESUMED", "Demo Feed restored; trigger awaits a fresh frame.");
         }
@@ -922,6 +1061,15 @@ export class GhostService {
   async processEvaluationFrame(userId: string, frame: EvaluationFrame): Promise<void> {
     await this.database.transaction(async (tx) => {
       const portfolio = await this.activePortfolio(tx, userId);
+      await tx.query(
+        `INSERT INTO evaluation_frames
+          (id, portfolio_id, market, cutoff_at, assembled_at, mode, completeness, execution_eligible, observations)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (id) DO NOTHING`,
+        [frame.id, portfolio.id, frame.market, frame.cutoffAt, frame.assembledAt, frame.mode, frame.completeness, frame.executionEligible, JSON.stringify(frame.observations)],
+      );
+      const storedFrame = await one<{ portfolio_id: string }>(tx, "SELECT portfolio_id FROM evaluation_frames WHERE id=$1", [frame.id]);
+      if (storedFrame?.portfolio_id !== portfolio.id) throw new AppError("PORTFOLIO_GENERATION_MISMATCH", "Evaluation frame belongs to another portfolio generation.", 409);
       await this.evaluateWatchingGhosts(tx, userId, portfolio, frame);
     });
   }
@@ -1050,10 +1198,10 @@ export class GhostService {
   private async evaluateWatchingGhosts(db: Queryable, userId: string, portfolio: PortfolioRow, frame: EvaluationFrame): Promise<void> {
     if (frame.completeness !== "COMPLETE" || !frame.executionEligible) {
       const pauseReason = frame.completeness === "STALE" ? "DATA_STALE" : "FRAME_INCOMPLETE";
-      const active = await rows<{ id: string }>(db, "SELECT id FROM ghosts WHERE user_id = $1 AND status = 'WATCHING'", [userId]);
+      const active = await rows<{ id: string }>(db, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [userId, portfolio.id]);
       await db.query(
-        "UPDATE ghosts SET status = 'PAUSED', pause_reason = $1, updated_at = NOW() WHERE user_id = $2 AND status = 'WATCHING'",
-        [pauseReason, userId],
+        "UPDATE ghosts SET status = 'PAUSED', pause_reason = $1, updated_at = NOW() WHERE user_id = $2 AND portfolio_id = $3 AND status = 'WATCHING'",
+        [pauseReason, userId, portfolio.id],
       );
       for (const ghost of active) {
         await this.addActivity(db, userId, ghost.id, "PAUSED", pauseReason === "DATA_STALE" ? "Required market data became stale. Execution is blocked." : "A complete aligned market frame could not be assembled. Execution is blocked.", { frameId: frame.id, pauseReason });
@@ -1063,21 +1211,21 @@ export class GhostService {
 
     const recovering = await rows<{ id: string }>(
       db,
-      "SELECT id FROM ghosts WHERE user_id = $1 AND status = 'PAUSED' AND pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')",
-      [userId],
+      "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')",
+      [userId, portfolio.id],
     );
     await db.query(
-      "UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND status = 'PAUSED' AND pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')",
-      [userId],
+      "UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')",
+      [userId, portfolio.id],
     );
     for (const ghost of recovering) {
       await this.addActivity(db, userId, ghost.id, "DATA_RECOVERED", "A complete fresh frame restored automatic monitoring.", { frameId: frame.id });
     }
 
-    const ghostRows = await rows<GhostRow>(db, "SELECT * FROM ghosts WHERE user_id = $1 AND status = 'WATCHING' ORDER BY created_at", [userId]);
+    const ghostRows = await rows<GhostRow>(db, "SELECT * FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING' ORDER BY created_at", [userId, portfolio.id]);
     for (const ghost of ghostRows) {
       if (new Date(ghost.expires_at).getTime() <= Date.now()) {
-        await db.query("UPDATE ghosts SET status = 'EXPIRED', updated_at = NOW() WHERE id = $1", [ghost.id]);
+        await db.query("UPDATE ghosts SET status = 'EXPIRED', pause_reason = NULL, updated_at = NOW() WHERE id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [ghost.id, portfolio.id]);
         if (ghost.reservation_id) await this.releaseReservation(db, ghost.reservation_id, "GHOST_EXPIRED");
         await this.addActivity(db, userId, ghost.id, "EXPIRED", "Trigger expired. Reserved capital released.");
         continue;
@@ -1086,8 +1234,8 @@ export class GhostService {
       const readyCount = evaluations.filter((evaluation) => evaluation.satisfied).length;
       const allQualified = readyCount === evaluations.length;
       await db.query(
-        "UPDATE ghosts SET evaluations = $1, trigger_proximity = $2, was_qualified = $3, updated_at = NOW() WHERE id = $4",
-        [JSON.stringify(evaluations), readyCount / evaluations.length, allQualified, ghost.id],
+        "UPDATE ghosts SET evaluations = $1, trigger_proximity = $2, was_qualified = $3, updated_at = NOW() WHERE id = $4 AND portfolio_id=$5 AND status='WATCHING'",
+        [JSON.stringify(evaluations), readyCount / evaluations.length, allQualified, ghost.id, portfolio.id],
       );
       if (allQualified && !ghost.was_qualified) {
         await this.executeGhost(db, userId, portfolio, ghost, frame, evaluations);
@@ -1099,7 +1247,11 @@ export class GhostService {
     const reservation = await one<ReservationRow>(db, "SELECT * FROM capital_reservations WHERE id = $1", [reservationId]);
     if (!reservation || !["ACTIVE", "LOCKED"].includes(reservation.status)) return;
     const timestamp = now();
-    await db.query("UPDATE capital_reservations SET status = 'RELEASED', version = version + 1, updated_at = $1 WHERE id = $2", [timestamp, reservation.id]);
+    const released = await db.query(
+      "UPDATE capital_reservations SET status = 'RELEASED', version = version + 1, updated_at = $1 WHERE id = $2 AND status = $3 RETURNING id",
+      [timestamp, reservation.id, reservation.status],
+    );
+    if (!released.rows[0]) return;
     await db.query(
       "INSERT INTO capital_reservation_events (id, reservation_id, from_status, to_status, reason, idempotency_key, created_at) VALUES ($1, $2, $3, 'RELEASED', $4, $5, $6) ON CONFLICT (idempotency_key) DO NOTHING",
       [randomUUID(), reservation.id, reservation.status, reason, `reservation:${reservation.id}:${reason.toLowerCase()}`, timestamp],
@@ -1115,10 +1267,25 @@ export class GhostService {
     evaluations: ConditionResult[],
   ): Promise<void> {
     if (!frame.executionEligible || !ghost.reservation_id) return;
+    if (ghost.portfolio_id !== portfolio.id) throw new AppError("PORTFOLIO_GENERATION_MISMATCH", "Trigger belongs to an archived portfolio generation.", 409);
+    if (new Date(ghost.expires_at).getTime() <= Date.now()) {
+      const expired = await db.query(
+        "UPDATE ghosts SET status='EXPIRED', pause_reason=NULL, updated_at=NOW() WHERE id=$1 AND portfolio_id=$2 AND status='WATCHING' AND expires_at <= NOW() RETURNING id",
+        [ghost.id, portfolio.id],
+      );
+      if (expired.rows[0]) {
+        await this.releaseReservation(db, ghost.reservation_id, "GHOST_EXPIRED");
+        await this.addActivity(db, userId, ghost.id, "EXPIRED", "Trigger expired. Reserved capital released.");
+      }
+      return;
+    }
+    const generation = await one<{ id: string }>(db, "SELECT id FROM portfolios WHERE id=$1 AND user_id=$2 AND status='ACTIVE'", [portfolio.id, userId]);
+    const storedFrame = await one<{ id: string }>(db, "SELECT id FROM evaluation_frames WHERE id=$1 AND portfolio_id=$2", [frame.id, portfolio.id]);
+    if (!generation || !storedFrame) throw new AppError("PORTFOLIO_GENERATION_MISMATCH", "Execution inputs do not belong to the active portfolio generation.", 409);
     const attemptKey = `attempt:${ghost.id}:${ghost.configuration_version}:${frame.id}`;
     const existing = await one<Record<string, unknown>>(db, "SELECT id FROM execution_attempts WHERE idempotency_key = $1", [attemptKey]);
     if (existing) return;
-    const reservation = await one<ReservationRow>(db, "SELECT * FROM capital_reservations WHERE id = $1 AND status = 'ACTIVE'", [ghost.reservation_id]);
+    const reservation = await one<ReservationRow>(db, "SELECT * FROM capital_reservations WHERE id = $1 AND ghost_id = $2 AND portfolio_id = $3 AND status = 'ACTIVE'", [ghost.reservation_id, ghost.id, portfolio.id]);
     if (!reservation) throw new AppError("RESERVATION_NOT_ACTIVE", "Capital reservation is not active.", 409);
 
     const attemptId = randomUUID();
@@ -1127,23 +1294,37 @@ export class GhostService {
       "INSERT INTO execution_attempts (id, ghost_id, configuration_version, trigger_frame_id, idempotency_key, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'LOCKED', $6, $6)",
       [attemptId, ghost.id, ghost.configuration_version, frame.id, attemptKey, timestamp],
     );
-    await db.query("UPDATE capital_reservations SET status = 'LOCKED', version = version + 1, updated_at = $1 WHERE id = $2", [timestamp, reservation.id]);
-    await db.query("UPDATE ghosts SET status = 'TRIGGERED', triggered_at = $1, updated_at = $1 WHERE id = $2", [timestamp, ghost.id]);
+    const locked = await db.query("UPDATE capital_reservations SET status = 'LOCKED', version = version + 1, updated_at = $1 WHERE id = $2 AND ghost_id=$3 AND portfolio_id=$4 AND status='ACTIVE' RETURNING id", [timestamp, reservation.id, ghost.id, portfolio.id]);
+    const triggered = await db.query("UPDATE ghosts SET status = 'TRIGGERED', triggered_at = $1, updated_at = $1 WHERE id = $2 AND portfolio_id=$3 AND status='WATCHING' RETURNING id", [timestamp, ghost.id, portfolio.id]);
+    if (!locked.rows[0] || !triggered.rows[0]) throw new AppError("EXECUTION_STATE_CONFLICT", "Trigger state changed before execution could lock.", 409);
     await this.addActivity(db, userId, ghost.id, "TRIGGERED", `All ${evaluations.length === 1 ? "active condition" : `${evaluations.length} active conditions`} locked in one complete frame.`, { frameId: frame.id });
 
     const price = frame.observations.PRICE.value;
     const quote = buildSandboxQuote({ side: ghost.side, reservedAmount: reservation.amount_decimal, referencePrice: price });
     if (quote.modeledSlippageBps > ghost.max_slippage_bps) {
       await db.query("UPDATE execution_attempts SET status = 'BLOCKED', updated_at = NOW() WHERE id = $1", [attemptId]);
-      await db.query("UPDATE capital_reservations SET status = 'ACTIVE', version = version + 1, updated_at = NOW() WHERE id = $1", [reservation.id]);
-      await db.query("UPDATE ghosts SET status = 'WATCHING', was_qualified = TRUE, updated_at = NOW() WHERE id = $1", [ghost.id]);
+      await db.query("UPDATE capital_reservations SET status = 'ACTIVE', version = version + 1, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='LOCKED'", [reservation.id, portfolio.id]);
+      await db.query("UPDATE ghosts SET status = 'WATCHING', was_qualified = TRUE, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='TRIGGERED'", [ghost.id, portfolio.id]);
       await this.addActivity(db, userId, ghost.id, "EXECUTION_BLOCKED", `Modeled slippage ${quote.modeledSlippageBps} bps exceeded the configured limit.`, { quote });
       return;
     }
 
-    await db.query("UPDATE execution_attempts SET status = 'SETTLING', updated_at = NOW() WHERE id = $1", [attemptId]);
-    await db.query("UPDATE ghosts SET status = 'EXECUTING', updated_at = NOW() WHERE id = $1", [ghost.id]);
+    const settling = await db.query("UPDATE execution_attempts SET status = 'SETTLING', updated_at = NOW() WHERE id = $1 AND status='LOCKED' RETURNING id", [attemptId]);
+    const executing = await db.query("UPDATE ghosts SET status = 'EXECUTING', updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='TRIGGERED' RETURNING id", [ghost.id, portfolio.id]);
+    if (!settling.rows[0] || !executing.rows[0]) throw new AppError("SETTLEMENT_STATE_CONFLICT", "Trigger state changed before settlement.", 409);
     await this.addActivity(db, userId, ghost.id, "EXECUTION_STARTED", "Simulated settlement started.", { quote });
+
+    const settlementGuard = await one<{ id: string }>(
+      db,
+      `SELECT g.id FROM ghosts g
+       JOIN portfolios p ON p.id=g.portfolio_id
+       JOIN capital_reservations r ON r.id=g.reservation_id
+       WHERE g.id=$1 AND g.user_id=$2 AND g.portfolio_id=$3 AND g.status='EXECUTING'
+         AND g.expires_at > NOW() AND p.status='ACTIVE'
+         AND r.ghost_id=g.id AND r.portfolio_id=p.id AND r.status='LOCKED'`,
+      [ghost.id, userId, portfolio.id],
+    );
+    if (!settlementGuard) throw new AppError("SETTLEMENT_GUARD_FAILED", "Execution inputs changed before settlement.", 409);
 
     const executionId = randomUUID();
     const ledgerTransactionId = randomUUID();
@@ -1205,6 +1386,7 @@ export class GhostService {
       "UPDATE balances SET quantity_decimal = $1, version = version + 1, updated_at = $2 WHERE portfolio_id = $3 AND asset = 'USDC'",
       [newUsdcQuantity.toFixed(6), completedAt, portfolio.id],
     );
+    await this.lifecycleHooks.beforeSettlementCommit?.();
     await db.query("UPDATE portfolios SET version = version + 1, updated_at = $1 WHERE id = $2", [completedAt, portfolio.id]);
 
     const receipt = {
@@ -1249,12 +1431,12 @@ export class GhostService {
       ],
     );
     await db.query("UPDATE execution_attempts SET status = 'FILLED', updated_at = $1 WHERE id = $2", [completedAt, attemptId]);
-    await db.query("UPDATE capital_reservations SET status = 'CONSUMED', version = version + 1, updated_at = $1 WHERE id = $2", [completedAt, reservation.id]);
+    await db.query("UPDATE capital_reservations SET status = 'CONSUMED', version = version + 1, updated_at = $1 WHERE id = $2 AND portfolio_id=$3 AND status='LOCKED'", [completedAt, reservation.id, portfolio.id]);
     await db.query(
       "INSERT INTO capital_reservation_events (id, reservation_id, from_status, to_status, reason, idempotency_key, created_at) VALUES ($1, $2, 'LOCKED', 'CONSUMED', 'SETTLEMENT_FILLED', $3, $4)",
       [randomUUID(), reservation.id, `reservation:${reservation.id}:consumed`, completedAt],
     );
-    await db.query("UPDATE ghosts SET status = 'FILLED', executed_at = $1, updated_at = $1 WHERE id = $2", [completedAt, ghost.id]);
+    await db.query("UPDATE ghosts SET status = 'FILLED', executed_at = $1, updated_at = $1 WHERE id = $2 AND portfolio_id=$3 AND status='EXECUTING'", [completedAt, ghost.id, portfolio.id]);
     await this.addActivity(db, userId, ghost.id, "FILLED", `${new Decimal(reservation.amount_decimal).toDecimalPlaces(9).toFixed()} ${inputAsset} settled for ${new Decimal(quote.amountOut).toDecimalPlaces(6).toFixed()} ${outputAsset}.`, {
       executionId,
       ledgerTransactionId,

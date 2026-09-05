@@ -305,6 +305,222 @@ describe("Ghost API", () => {
     expect(await secondWorker.acquireWorkerLease("worker-b", 15)).toBe(true);
   });
 
+  it("expires paused triggers and releases capital without a market frame", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Paused deadline") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/pause`, headers: { cookie: isolatedCookie } });
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [created.id]);
+
+    await database.query("DELETE FROM worker_leases WHERE partition_key='SOL/USDC'");
+    const restartedService = new GhostService(database);
+    const firstTick = await restartedService.runMaintenanceTick("expiry-test-worker", () => undefined);
+    const secondTick = await restartedService.runMaintenanceTick("expiry-test-worker", () => undefined);
+    expect(firstTick).toMatchObject({ leaseAcquired: true, expired: 1 });
+    expect(secondTick).toMatchObject({ leaseAcquired: true, expired: 0 });
+
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(ghost.status).toBe("EXPIRED");
+    expect(ghost.reservation.status).toBe("RELEASED");
+    expect(ghost.activities.filter((activity: { type: string }) => activity.type === "EXPIRED")).toHaveLength(1);
+  });
+
+  it("expires after stale market data pauses evaluation", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Stale deadline") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    const staleFrame = { ...workspace.frame, id: randomUUID(), completeness: "STALE", executionEligible: false };
+    await new GhostService(database).processEvaluationFrame(workspace.identity.id, staleFrame);
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [created.id]);
+
+    expect(await new GhostService(database).expireDueGhosts()).toBe(1);
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(ghost.status).toBe("EXPIRED");
+    expect(ghost.reservation.status).toBe("RELEASED");
+  });
+
+  it("expires draft triggers without requiring a market frame", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Draft deadline") })).json();
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [created.id]);
+
+    expect(await new GhostService(database).expireDueGhosts()).toBe(1);
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(ghost.status).toBe("EXPIRED");
+    expect(ghost.reservation).toBeNull();
+  });
+
+  it("expires a trigger paused by Live Data without a new frame", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Live deadline") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    await app.inject({ method: "POST", url: "/api/data-mode", headers: { cookie: isolatedCookie }, payload: { mode: "LIVE" } });
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [created.id]);
+
+    expect(await new GhostService(database).expireDueGhosts()).toBe(1);
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(ghost.status).toBe("EXPIRED");
+    expect(ghost.reservation.status).toBe("RELEASED");
+  });
+
+  it("keeps reset atomic when portfolio replacement fails", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Rollback boundary") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    const failingService = new GhostService(database, {
+      beforePortfolioReplacement: () => { throw new Error("injected reset failure"); },
+    });
+
+    await expect(failingService.resetPortfolio(before.identity.id, randomUUID())).rejects.toThrow("injected reset failure");
+    const after = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(after.portfolio.id).toBe(before.portfolio.id);
+    expect(ghost.status).toBe("WATCHING");
+    expect(ghost.reservation.status).toBe("ACTIVE");
+  });
+
+  it("serializes reset and deadline sweeping without leaking capital", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Concurrent deadline") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [created.id]);
+    const service = new GhostService(database);
+
+    await Promise.all([service.resetPortfolio(before.identity.id, randomUUID()), service.expireDueGhosts()]);
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(["CANCELLED", "EXPIRED"]).toContain(ghost.status);
+    expect(ghost.reservation.status).toBe("RELEASED");
+    expect(Number(workspace.portfolio.balances.SOL.quantity)).toBe(40);
+    expect(Number(workspace.portfolio.balances.USDC.quantity)).toBe(15000);
+    expect(workspace.executions).toHaveLength(0);
+  });
+
+  it("serializes cancellation and deadline sweeping to one terminal outcome", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Cancel deadline") })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    await database.query("UPDATE ghosts SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [created.id]);
+    const service = new GhostService(database);
+
+    const outcomes = await Promise.allSettled([
+      service.cancelGhost(workspace.identity.id, created.id, randomUUID()),
+      service.expireDueGhosts(),
+    ]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(["CANCELLED", "EXPIRED"]).toContain(ghost.status);
+    expect(ghost.reservation.status).toBe("RELEASED");
+    const releaseEvents = await database.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM capital_reservation_events WHERE reservation_id=$1 AND to_status='RELEASED'",
+      [ghost.reservation.id],
+    );
+    expect(Number(releaseEvents.rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it("rolls settlement back when a failure occurs before commit", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: isolatedCookie },
+      payload: { ...sellDraft("Settlement rollback"), conditions: [{ metric: "PRICE", operator: "GTE", target: "270" }] },
+    })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    const failingService = new GhostService(database, {
+      beforeSettlementCommit: () => { throw new Error("injected settlement failure"); },
+    });
+
+    await expect(failingService.advanceDemo(before.identity.id)).rejects.toThrow("injected settlement failure");
+    const after = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const ghost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    expect(after.portfolio.demoStep).toBe(1);
+    expect(after.portfolio.balances.SOL.quantity).toBe(before.portfolio.balances.SOL.quantity);
+    expect(after.portfolio.balances.USDC.quantity).toBe(before.portfolio.balances.USDC.quantity);
+    expect(ghost.status).toBe("WATCHING");
+    expect(ghost.reservation.status).toBe("ACTIVE");
+    expect(ghost.execution).toBeNull();
+  });
+
+  it("rejects an idempotency key reused for a different trigger", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const first = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Key owner") })).json();
+    const second = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Key mismatch") })).json();
+    const key = randomUUID();
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${first.id}/arm`, headers: { cookie: isolatedCookie, "idempotency-key": key } });
+    const mismatch = await app.inject({ method: "POST", url: `/api/ghosts/${second.id}/arm`, headers: { cookie: isolatedCookie, "idempotency-key": key } });
+    expect(armed.statusCode).toBe(200);
+    expect(mismatch.statusCode).toBe(409);
+    expect(mismatch.json().error.code).toBe("IDEMPOTENCY_KEY_REUSED");
+  });
+
+  it("keeps archived portfolio triggers from executing after reset", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const created = (await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: isolatedCookie },
+      payload: { ...sellDraft("Reset boundary"), conditions: [{ metric: "PRICE", operator: "GTE", target: "270" }] },
+    })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+
+    const reset = await app.inject({ method: "POST", url: "/api/portfolio/reset", headers: mutationHeaders(isolatedCookie) });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json().portfolio.id).not.toBe(before.portfolio.id);
+    await app.inject({ method: "POST", url: "/api/demo/step", headers: { cookie: isolatedCookie } });
+    await app.inject({ method: "POST", url: "/api/demo/step", headers: { cookie: isolatedCookie } });
+
+    const oldGhost = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}`, headers: { cookie: isolatedCookie } })).json();
+    const after = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    expect(oldGhost.status).toBe("CANCELLED");
+    expect(oldGhost.reservation.status).toBe("RELEASED");
+    expect(Number(after.portfolio.balances.SOL.quantity)).toBe(40);
+    expect(Number(after.portfolio.balances.USDC.quantity)).toBe(15000);
+    expect(after.executions).toHaveLength(0);
+  });
+
+  it("reports clean portfolio-generation integrity", async () => {
+    const response = await app.inject({ method: "GET", url: "/health/integrity" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      violations: {
+        ownershipMismatch: 0,
+        reservationPortfolioMismatch: 0,
+        framePortfolioMismatch: 0,
+        executionPortfolioMismatch: 0,
+        archivedNonterminalGhosts: 0,
+        orphanedOpenReservations: 0,
+      },
+    });
+  });
+
   it("does not combine conditions from different frames", async () => {
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
     const header = session.headers["set-cookie"]!;

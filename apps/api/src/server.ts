@@ -78,10 +78,9 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   }
 
   const backgroundTick = async () => {
-    if (await service.acquireWorkerLease(workerId)) {
-      await service.publishOutbox((userId, event) => events.emit(userId, event));
-    }
+    await service.runMaintenanceTick(workerId, (userId, event) => events.emit(userId, event));
   };
+  if (process.env.NODE_ENV !== "test") await backgroundTick();
   const workerTimer = process.env.NODE_ENV === "test" ? null : setInterval(() => void backgroundTick().catch((error) => app.log.error(error)), 1_000);
   workerTimer?.unref();
   app.addHook("onClose", async () => {
@@ -128,6 +127,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
       workerLease: lease.rows[0] ? { active: new Date(lease.rows[0].expires_at).getTime() > Date.now(), owner: lease.rows[0].owner_id.slice(0, 8) } : { active: false, owner: null },
     };
   });
+  app.get("/health/integrity", async () => service.integrityReport());
 
   app.post("/api/session/anonymous", async (request, reply) => {
     const currentToken = readSessionToken(request);

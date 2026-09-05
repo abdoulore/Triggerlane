@@ -278,6 +278,7 @@ VALUES (1, 'initial_ghost_orders', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS ghosts_user_created ON ghosts(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ghosts_portfolio_status_expiry ON ghosts(portfolio_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS activities_user_created ON ghost_activities(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS executions_portfolio_created ON executions(portfolio_id, completed_at DESC);
 `;
