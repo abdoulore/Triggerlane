@@ -15,8 +15,6 @@ const contextEnvelopeSchema = z.tuple([
   z.object({ universe: z.array(z.object({ name: z.string() })) }),
   z.array(z.object({
     markPx: decimalString,
-    oraclePx: decimalString,
-    midPx: decimalString.optional(),
     funding: decimalString,
     prevDayPx: decimalString.optional(),
   })),

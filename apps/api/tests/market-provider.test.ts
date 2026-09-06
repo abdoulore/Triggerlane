@@ -4,7 +4,7 @@ import { HyperliquidMarketProvider } from "../src/integrations/hyperliquid-marke
 const contextPayload = [
   { universe: [{ name: "BTC" }, { name: "SOL" }] },
   [
-    { markPx: "60000", oraclePx: "59990", funding: "0.00001", prevDayPx: "59000" },
+    { markPx: "60000", oraclePx: "59990", midPx: null, funding: "0.00001", prevDayPx: "59000" },
     { markPx: "250.50", oraclePx: "250.25", midPx: "250.45", funding: "0.000031", prevDayPx: "245.00" },
   ],
 ];
