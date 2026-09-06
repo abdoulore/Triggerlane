@@ -227,7 +227,11 @@ a { color: inherit; text-decoration: none; }
 .chart-toolbar > div { display: flex; align-items: center; gap: 5px; color: var(--muted); font: 8px var(--font-geist-mono); }
 .chart-toolbar button { width: 30px; height: 25px; padding: 0; border: 0; background: transparent; color: var(--muted); font: 8px var(--font-geist-mono); pointer-events: auto; cursor: pointer; }
 .chart-toolbar button.active { color: var(--accent); background: var(--accent-dark); border-radius: 3px; }
+.market-chart-shell { position: absolute; inset: 0; }
 .market-chart { position: absolute; inset: 0; }
+.market-chart-empty { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; gap: 8px; padding: 24px; text-align: center; background: rgba(7, 11, 10, .76); color: var(--muted); pointer-events: none; }
+.market-chart-empty b { color: var(--text); font-size: 15px; }
+.market-chart-empty span { max-width: 36ch; font: 11px/1.6 var(--font-geist-mono); }
 .chart-watermark { position: absolute; z-index: 1; left: 28px; bottom: 32px; display: flex; align-items: center; gap: 11px; color: rgba(255,255,255,.035); pointer-events: none; }
 .chart-watermark span { font: 700 14px var(--font-geist-mono); letter-spacing: .2em; }
 .watch-zone { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }

@@ -2,19 +2,17 @@
 
 import { useEffect, useRef } from "react";
 import { AreaSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type Time } from "lightweight-charts";
+import type { MarketHistoryPoint, MarketViewStatus } from "@ghost/domain";
 
-function buildData(current: number) {
-  const now = Math.floor(Date.now() / 1000);
-  const start = current - Math.max(14, current * 0.075);
-  return Array.from({ length: 72 }, (_, index) => {
-    const progress = index / 71;
-    const wave = Math.sin(index * 0.67) * 1.45 + Math.cos(index * 0.21) * 0.75;
-    const value = index === 71 ? current : start + (current - start) * progress + wave * Math.sin(progress * Math.PI);
-    return { time: (now - (71 - index) * 60) as Time, value };
-  });
+function chartData(points: MarketHistoryPoint[]) {
+  return points
+    .map((point) => ({ time: Math.floor(new Date(point.at).getTime() / 1000) as Time, value: Number(point.value) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
+    .sort((a, b) => Number(a.time) - Number(b.time))
+    .filter((point, index, all) => index === 0 || point.time !== all[index - 1]?.time);
 }
 
-export function MarketChart({ price }: { price: number }) {
+export function MarketChart({ points, status }: { points: MarketHistoryPoint[]; status: MarketViewStatus }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
@@ -39,7 +37,7 @@ export function MarketChart({ price }: { price: number }) {
       priceLineColor: "rgba(112,242,204,.45)",
       crosshairMarkerBackgroundColor: "#70f2cc",
     });
-    series.setData(buildData(price));
+    series.setData(chartData(points));
     chart.timeScale().fitContent();
     chartRef.current = chart;
     seriesRef.current = series;
@@ -47,9 +45,12 @@ export function MarketChart({ price }: { price: number }) {
   }, []);
 
   useEffect(() => {
-    seriesRef.current?.setData(buildData(price));
-    chartRef.current?.timeScale().scrollToRealTime();
-  }, [price]);
+    seriesRef.current?.setData(chartData(points));
+    chartRef.current?.timeScale().fitContent();
+  }, [points]);
 
-  return <div ref={hostRef} className="market-chart" aria-label="SOL price chart" />;
+  return <div className="market-chart-shell">
+    <div ref={hostRef} className="market-chart" aria-label="Stored SOL market price history" />
+    {points.length === 0 && <div className="market-chart-empty" role="status"><b>{status === "LOADING" ? "Loading market history" : "Market history unavailable"}</b><span>No price path is drawn without source-backed observations.</span></div>}
+  </div>;
 }

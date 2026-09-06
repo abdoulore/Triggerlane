@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 const productPages = [
-  { path: "/trade", heading: /^SOL \/ USDC$/ },
+  { path: "/trade", heading: /^SOL PERP \/ USDC$/ },
   { path: "/ghosts", heading: "Your triggers" },
   { path: "/portfolio", heading: "Your virtual portfolio" },
   { path: "/history", heading: "Trigger history" },
@@ -25,7 +25,7 @@ const draft = {
 
 async function createGhost(page: Page) {
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: /^SOL \/ USDC$/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: /^SOL PERP \/ USDC$/ })).toBeVisible({ timeout: 15_000 });
   return page.evaluate(async (payload) => {
     const response = await fetch("http://127.0.0.1:8787/api/ghosts", {
       method: "POST",
@@ -162,7 +162,7 @@ test("first-time comprehension and honesty gate covers the ten product questions
 
   await page.goto("/trade");
   const market = page.getByRole("region", { name: "Market overview" });
-  await expect(market.getByText("CURRENT MARKET PRICE", { exact: true })).toBeVisible();
+  await expect(market.getByText(/^CURRENT (MARK PRICE|SIMULATED MARK)$/)).toBeVisible();
   await expect(market.getByText("FUNDING", { exact: true })).toBeVisible();
   await expect(market.getByText("POSITION P&L", { exact: true })).toBeVisible();
   await expect(page.getByText(/acts when every active condition is true/i)).toBeVisible();
@@ -193,7 +193,7 @@ test("core routes stay inside interaction and navigation budgets", async ({ page
 
 test("phase 30 keeps navigation calm and market detail progressive", async ({ page }, testInfo) => {
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: /^SOL \/ USDC$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^SOL PERP \/ USDC$/ })).toBeVisible();
 
   const home = page.getByRole("link", { name: "Go to Triggerlane home" });
   await expect(home).toHaveAttribute("href", "/");

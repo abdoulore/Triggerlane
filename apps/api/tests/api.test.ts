@@ -654,13 +654,34 @@ describe("Ghost API", () => {
       app.inject({ method: "GET", url: "/api/ghosts", headers: { cookie } }),
       app.inject({ method: "GET", url: "/api/history", headers: { cookie } }),
     ]);
-    expect(markets.json().markets[0]).toMatchObject({ symbol: "SOL/USDC", liveExecutionEligible: false });
+    expect(markets.json().markets[0]).toMatchObject({ symbol: "SOL-PERP/USDC", instrument: "SOL-PERP", priceType: "MARK_PRICE", liveExecutionEligible: false });
     expect(market.json()).toMatchObject({ asset: "SOL", quoteAsset: "USDC" });
     expect(mode.json()).toMatchObject({ executionEligible: true });
     expect(portfolio.json().balances).toHaveProperty("USDC");
     expect(Array.isArray(ghosts.json())).toBe(true);
     expect(history.json()).toHaveProperty("executions");
     for (const response of [markets, market, mode, portfolio, ghosts, history]) expect(response.statusCode).toBe(200);
+  });
+
+  it("returns only stored Demo observations as chart history", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const first = await app.inject({ method: "GET", url: "/api/market-view", headers: { cookie: isolatedCookie } });
+    expect(first.json()).toMatchObject({
+      mode: "DEMO",
+      instrument: { symbol: "SOL-PERP", priceType: "SIMULATED_MARK" },
+      funding: { period: "DEMO_STEP" },
+      change: { value: null, label: null },
+      history: { status: "AVAILABLE", interval: "DEMO_STEP" },
+    });
+    expect(first.json().history.points).toHaveLength(1);
+
+    await app.inject({ method: "POST", url: "/api/demo/step", headers: { cookie: isolatedCookie } });
+    const second = (await app.inject({ method: "GET", url: "/api/market-view", headers: { cookie: isolatedCookie } })).json();
+    expect(second.history.points).toHaveLength(2);
+    expect(second.history.points.map((point: { value: string }) => Number(point.value))).toEqual([246, 258.4]);
+    expect(second.change).toMatchObject({ label: "SIMULATION_PERIOD" });
   });
 
   it("updates only a draft with optimistic configuration versioning", async () => {

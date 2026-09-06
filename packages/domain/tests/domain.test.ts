@@ -14,6 +14,7 @@ import {
   isObservationNewer,
   parseGhostPrompt,
   STRATEGY_TEMPLATES,
+  valuePortfolio,
   type AdapterCapabilityMatrix,
 } from "../src/index";
 
@@ -164,5 +165,22 @@ describe("Ghost domain", () => {
     expect(isObservationNewer(base, base)).toBe(false);
     expect(isObservationNewer({ ...base, id: "old", providerSequence: 3, receivedAt: "2026-08-30T12:00:02.000Z" }, base)).toBe(false);
     expect(isObservationNewer({ ...base, id: "new", providerSequence: 5 }, base)).toBe(true);
+  });
+
+  it("values Trade and Portfolio from one explicit quote snapshot", () => {
+    const valuation = valuePortfolio({ solQuantity: "40", usdcQuantity: "15000", solReserved: "10", usdcReserved: "0", solCostBasisUsdc: "10000", price: "275" });
+    expect(valuation).toEqual({
+      price: "275",
+      solValueUsdc: "11000.000000",
+      equityUsdc: "26000.000000",
+      reservedValueUsdc: "2750.000000",
+      availableValueUsdc: "23250.000000",
+      pnlRatio: "0.1",
+    });
+  });
+
+  it("returns unavailable valuation and P&L instead of inventing zero", () => {
+    expect(valuePortfolio({ solQuantity: "40", usdcQuantity: "15000", solReserved: "0", usdcReserved: "0", solCostBasisUsdc: "10000", price: null })).toMatchObject({ equityUsdc: null, pnlRatio: null });
+    expect(valuePortfolio({ solQuantity: "0", usdcQuantity: "15000", solReserved: "0", usdcReserved: "0", solCostBasisUsdc: null, price: "275" })).toMatchObject({ equityUsdc: "15000.000000", pnlRatio: null });
   });
 });

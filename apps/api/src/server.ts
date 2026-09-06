@@ -157,6 +157,10 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   app.get("/api/workspace", { preHandler: requireSession }, async (request) => service.workspace(request.userId!));
   app.get("/api/markets", { preHandler: requireSession }, async () => service.markets());
   app.get("/api/markets/:asset", { preHandler: requireSession }, async (request) => service.market((request.params as { asset: string }).asset));
+  app.get("/api/market-view", { preHandler: requireSession }, async (request) => {
+    const { interval } = request.query as { interval?: string };
+    return service.marketView(request.userId!, interval);
+  });
   app.get("/api/data-mode", { preHandler: requireSession }, async (request) => service.dataMode(request.userId!));
   app.get("/api/portfolio", { preHandler: requireSession }, async (request) => service.portfolio(request.userId!));
   app.post("/api/portfolio/reset", { preHandler: requireSession }, async (request) => {
@@ -188,6 +192,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     const { id } = request.params as { id: string };
     const ghost = await service.armGhost(request.userId!, id, requireIdempotencyKey(request));
     changed(request.userId!, "ghost.status.updated", { ghostId: ghost.id, status: ghost.status });
+    changed(request.userId!, "market.frame.updated", { reason: "ghost.armed" });
     await service.trackAnalytics(request.userId!, "ghost_armed", { ghostId: ghost.id });
     return ghost;
   });

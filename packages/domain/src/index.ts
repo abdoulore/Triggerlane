@@ -363,6 +363,78 @@ export interface EvaluationFrame {
   observations: Record<Metric, MetricObservation>;
 }
 
+export type MarketViewStatus = "LOADING" | "FRESH" | "STALE" | "UNAVAILABLE";
+export type MarketHistoryInterval = "DEMO_STEP" | "1m" | "5m" | "1h";
+
+export interface MarketHistoryPoint {
+  id: string;
+  at: string;
+  value: string;
+}
+
+export interface MarketView {
+  mode: DataMode;
+  instrument: {
+    symbol: "SOL-PERP";
+    displayName: "SOL perpetual";
+    quoteAsset: "USDC";
+    priceType: "SIMULATED_MARK" | "MARK_PRICE";
+  };
+  provider: string;
+  snapshotId: string | null;
+  price: { value: string | null; unit: "USDC_PER_SOL" };
+  funding: { value: string | null; unit: "RATIO"; period: "DEMO_STEP" | "1H" };
+  sourceTimestamp: string | null;
+  receivedAt: string | null;
+  status: MarketViewStatus;
+  executionEligible: boolean;
+  eligibilityReason: string;
+  change: { value: string | null; label: "SIMULATION_PERIOD" | "24H" | null };
+  history: {
+    status: "AVAILABLE" | "UNAVAILABLE";
+    interval: MarketHistoryInterval;
+    points: MarketHistoryPoint[];
+    reason: string | null;
+  };
+}
+
+export interface PortfolioValuation {
+  price: string | null;
+  solValueUsdc: string | null;
+  equityUsdc: string | null;
+  reservedValueUsdc: string | null;
+  availableValueUsdc: string | null;
+  pnlRatio: string | null;
+}
+
+export function valuePortfolio(input: {
+  solQuantity: Decimal.Value;
+  usdcQuantity: Decimal.Value;
+  solReserved: Decimal.Value;
+  usdcReserved: Decimal.Value;
+  solCostBasisUsdc: Decimal.Value | null;
+  price: Decimal.Value | null;
+}): PortfolioValuation {
+  if (input.price == null) {
+    return { price: null, solValueUsdc: null, equityUsdc: null, reservedValueUsdc: null, availableValueUsdc: null, pnlRatio: null };
+  }
+  const price = new Decimal(input.price);
+  const solQuantity = new Decimal(input.solQuantity);
+  const usdcQuantity = new Decimal(input.usdcQuantity);
+  const solValue = solQuantity.mul(price);
+  const equity = solValue.plus(usdcQuantity);
+  const reserved = new Decimal(input.solReserved).mul(price).plus(input.usdcReserved);
+  const basis = input.solCostBasisUsdc == null ? null : new Decimal(input.solCostBasisUsdc);
+  return {
+    price: price.toFixed(),
+    solValueUsdc: solValue.toFixed(6),
+    equityUsdc: equity.toFixed(6),
+    reservedValueUsdc: reserved.toFixed(6),
+    availableValueUsdc: equity.minus(reserved).toFixed(6),
+    pnlRatio: basis && basis.gt(0) && solQuantity.gt(0) ? solValue.minus(basis).div(basis).toDecimalPlaces(8).toFixed() : null,
+  };
+}
+
 export function classifyFrameTiming(frame: EvaluationFrame, nowMs = Date.now(), maxAgeMs = 15_000, maxSkewMs = 5_000): EvaluationFrame["completeness"] {
   const timestamps = Object.values(frame.observations).map((observation) => new Date(observation.sourceTimestamp ?? observation.receivedAt).getTime());
   if (timestamps.some((timestamp) => !Number.isFinite(timestamp))) return "INCOMPLETE";

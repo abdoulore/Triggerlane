@@ -35,7 +35,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useReducer, useState } from "react";
-import { evaluateCondition, formatMetric, type AiComposeResult, type GhostDraft, type Metric } from "@ghost/domain";
+import { evaluateCondition, formatMetric, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { API_URL, ApiError, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
 import { MarketChart } from "./market-chart";
@@ -200,19 +200,6 @@ interface Workspace {
   reservations: CapitalReservation[];
 }
 
-interface LiveMarket {
-  market: string;
-  provider: string;
-  price: string;
-  oraclePrice: string;
-  midPrice: string | null;
-  funding: string;
-  receivedAt: string;
-  sourceTimestamp: null;
-  executionEligible: false;
-  eligibilityReason: string;
-}
-
 interface Diagnostics {
   ok: boolean;
   averageResponseMs: number;
@@ -350,6 +337,16 @@ function dateTime(value: string) {
 function ageLabel(value: string) {
   const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
   return seconds < 2 ? "JUST NOW" : seconds < 60 ? `${seconds}S AGO` : `${Math.floor(seconds / 60)}M AGO`;
+}
+
+function optionalMoney(value: string | null) {
+  return value == null ? "--" : `$${money.format(Number(value))}`;
+}
+
+function optionalPercent(value: string | null, digits = 2) {
+  if (value == null) return "--";
+  const percentage = Number(value) * 100;
+  return `${percentage >= 0 ? "+" : ""}${percentage.toFixed(digits)}%`;
 }
 
 function providerLabel(value: string) {
@@ -491,6 +488,7 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
       setError(null);
       onCreated(ghost);
       void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      void queryClient.invalidateQueries({ queryKey: ["market-view"] });
     },
     onError: (caught) => setError(caught instanceof Error ? caught.message : "Trigger could not start watching."),
   });
@@ -712,7 +710,7 @@ function DiscoverView({ workspace }: { workspace: Workspace }) {
   const commitmentAsset = selected?.draft.side === "BUY" ? "USDC" : "SOL";
   const commitmentValue = selected?.draft.side === "BUY" ? commitmentAmount : commitmentAmount * price;
   return <main className="page-view discover-editorial">
-    <div className="page-title discover-title"><div><span className="eyebrow">CURATED TRIGGER STRATEGIES</span><h1>Start with a moment worth watching</h1><p>Explore a small set of tested ideas, understand every condition, then load one into Composer for your own review.</p></div><div className="discover-market"><span>SUPPORTED SIMULATION</span><b>SOL / USDC</b><small>PRICE · FUNDING · POSITION P&amp;L</small></div></div>
+    <div className="page-title discover-title"><div><span className="eyebrow">CURATED TRIGGER STRATEGIES</span><h1>Start with a moment worth watching</h1><p>Explore a small set of tested ideas, understand every condition, then load one into Composer for your own review.</p></div><div className="discover-market"><span>SUPPORTED SIMULATION</span><b>SOL PERP / USDC</b><small>PRICE · FUNDING · POSITION P&amp;L</small></div></div>
     <DiscoverBeginnerGuide />
     <nav className="discover-navigation" aria-label="Strategy catalog navigation"><div className="strategy-tabs" role="tablist" aria-label="Strategy categories">{catalog.data.categories.map((item) => <button role="tab" aria-selected={category === item} className={category === item ? "active" : ""} key={item} onClick={() => chooseCategory(item)}>{item}</button>)}</div><div className="metric-filters" role="group" aria-label="Supported metric filter"><span>FILTER BY SIGNAL</span>{(["ALL", ...catalog.data.capabilities.metrics] as const).map((item) => <button aria-pressed={metric === item} className={metric === item ? "active" : ""} key={item} onClick={() => { setMetric(item); setSelectedId(null); setReplayResult(null); }}>{item === "ALL" ? "All three" : item === "PNL" ? "Position P&L" : item}</button>)}</div></nav>
     {category === "Advanced" ? <section className="strategy-unavailable advanced-boundary"><SlidersHorizontal size={35} /><span className="eyebrow">OUTSIDE THE CURRENT CATALOG</span><h2>Advanced signals need qualified data first</h2><p>Liquidity, TVL, and volume are not available to the execution engine, so strategies that depend on them stay outside the selectable catalog.</p><div>{catalog.data.capabilities.unsupportedAdvancedMetrics.map((item) => <span key={item}>{item} · UNSUPPORTED</span>)}</div><button onClick={() => chooseCategory("Popular")}>RETURN TO CURATED STRATEGIES</button></section> : selected ? <>
@@ -723,21 +721,23 @@ function DiscoverView({ workspace }: { workspace: Workspace }) {
   </main>;
 }
 
-function PortfolioRail({ workspace, price }: { workspace: Workspace; price: number }) {
+function PortfolioRail({ workspace, market }: { workspace: Workspace; market?: MarketView }) {
   const sol = workspace.portfolio.balances.SOL;
   const usdc = workspace.portfolio.balances.USDC;
-  const value = Number(usdc.quantity) + Number(sol.quantity) * price;
-  const reservedValue = Number(usdc.reserved) + Number(sol.reserved) * price;
+  const valuation = valuePortfolio({ solQuantity: sol.quantity, usdcQuantity: usdc.quantity, solReserved: sol.reserved, usdcReserved: usdc.reserved, solCostBasisUsdc: sol.costBasisUsdc, price: market?.price.value ?? null });
+  const value = valuation.equityUsdc == null ? null : Number(valuation.equityUsdc);
+  const reservedValue = valuation.reservedValueUsdc == null ? null : Number(valuation.reservedValueUsdc);
+  const availableValue = valuation.availableValueUsdc == null ? null : Number(valuation.availableValueUsdc);
   return (
     <aside className="portfolio-rail">
-      <div className="rail-section portfolio-total"><span className="eyebrow">VIRTUAL EQUITY</span><strong>${money.format(value)}</strong><small>SIMULATED USDC VALUE</small></div>
-      <div className="rail-section"><div className="rail-label"><span>Available</span><span>${money.format(value - reservedValue)}</span></div><div className="rail-meter"><span style={{ width: `${value ? ((value - reservedValue) / value) * 100 : 0}%` }} /></div></div>
+      <div className="rail-section portfolio-total"><span className="eyebrow">VIRTUAL EQUITY</span><strong>{value == null ? "--" : `$${money.format(value)}`}</strong><small>{market?.status === "UNAVAILABLE" ? "MARK UNAVAILABLE" : `${market?.mode ?? "MARKET"} USDC VALUE`}</small></div>
+      <div className="rail-section"><div className="rail-label"><span>Available</span><span>{availableValue == null ? "--" : `$${money.format(availableValue)}`}</span></div><div className="rail-meter"><span style={{ width: `${value && availableValue != null ? availableValue / value * 100 : 0}%` }} /></div></div>
       <div className="rail-section assets">
         <span className="eyebrow">POSITIONS</span>
-        <div className="asset-row"><span className="asset-symbol sol-symbol">S</span><div><b>SOL</b><small>{quantity.format(Number(sol.quantity))} SOL</small></div><strong>${money.format(Number(sol.quantity) * price)}</strong></div>
+        <div className="asset-row"><span className="asset-symbol sol-symbol">S</span><div><b>SOL</b><small>{quantity.format(Number(sol.quantity))} SOL</small></div><strong>{optionalMoney(valuation.solValueUsdc)}</strong></div>
         <div className="asset-row"><span className="asset-symbol usdc-symbol">$</span><div><b>USDC</b><small>{quantity.format(Number(usdc.quantity))} USDC</small></div><strong>${money.format(Number(usdc.quantity))}</strong></div>
       </div>
-      <div className="rail-section armed-capital"><span className="eyebrow">ARMED CAPITAL</span><strong>${money.format(reservedValue)}</strong><small>{workspace.ghosts.filter((ghost) => ["WATCHING", "PAUSED"].includes(ghost.status)).length} ACTIVE TRIGGERS</small></div>
+      <div className="rail-section armed-capital"><span className="eyebrow">ARMED CAPITAL</span><strong>{reservedValue == null ? "--" : `$${money.format(reservedValue)}`}</strong><small>{workspace.ghosts.filter((ghost) => ["WATCHING", "PAUSED"].includes(ghost.status)).length} ACTIVE TRIGGERS</small></div>
       <div className="rail-section rialo-note"><span className="rail-icon"><Pulse size={18} /></span><div><b>Rialo target</b><small>Reactive adapter not configured</small></div></div>
     </aside>
   );
@@ -760,7 +760,7 @@ function FeedControls({ workspace, step, stepping }: { workspace: Workspace; ste
   );
 }
 
-function TradeView({ workspace, live, capabilities }: { workspace: Workspace; live?: LiveMarket; capabilities: RuntimeCapabilities }) {
+function TradeView({ workspace, market, marketLoading, interval, onInterval, capabilities }: { workspace: Workspace; market?: MarketView; marketLoading: boolean; interval: "1m" | "5m" | "1h"; onInterval: (interval: "1m" | "5m" | "1h") => void; capabilities: RuntimeCapabilities }) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -780,33 +780,41 @@ function TradeView({ workspace, live, capabilities }: { workspace: Workspace; li
   }, [composerOpen]);
   const selected = workspace.ghosts.find((ghost) => ghost.id === selectedId) ?? workspace.ghosts.find((ghost) => ["WATCHING", "PAUSED", "DRAFT"].includes(ghost.status)) ?? workspace.ghosts[0];
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
-  const price = Number(modeIsLive && live ? live.price : workspace.frame.observations.PRICE.value);
-  const funding = modeIsLive && live ? live.funding : workspace.frame.observations.FUNDING.value;
-  const pnl = workspace.frame.observations.PNL.value;
-  const observedAt = modeIsLive ? workspace.frame.assembledAt : workspace.frame.observations.PRICE.sourceTimestamp ?? workspace.frame.observations.PRICE.receivedAt;
+  const sol = workspace.portfolio.balances.SOL;
+  const usdc = workspace.portfolio.balances.USDC;
+  const valuation = valuePortfolio({ solQuantity: sol.quantity, usdcQuantity: usdc.quantity, solReserved: sol.reserved, usdcReserved: usdc.reserved, solCostBasisUsdc: sol.costBasisUsdc, price: market?.price.value ?? null });
+  const price = market?.price.value ?? null;
+  const funding = market?.funding.value ?? null;
+  const observedAt = market?.sourceTimestamp ?? market?.receivedAt ?? null;
   const evaluations = selected?.evaluations?.length ? selected.evaluations : initialComposer.conditions.map((condition) => evaluateCondition(condition, workspace.frame.observations[condition.metric].value));
   const ready = evaluations.filter((item) => item.satisfied).length;
   const conditionCount = evaluations.length;
   const waitingReason = ghostWaitingReason(selected, evaluations, workspace.frame);
-  const step = useMutation({ mutationFn: () => api("/api/demo/step", { method: "POST" }), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }) });
+  const step = useMutation({
+    mutationFn: () => api("/api/demo/step", { method: "POST" }),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+      queryClient.invalidateQueries({ queryKey: ["market-view"] }),
+    ]),
+  });
 
   return (
     <div className="trade-layout phase-25-trade">
-      <div id="portfolio"><PortfolioRail workspace={workspace} price={price} /></div>
+      <div id="portfolio"><PortfolioRail workspace={workspace} market={market} /></div>
       <main className="market-workspace">
         <section className="market-header" aria-label="Market overview">
-          <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL <i>/</i> USDC</h1></div></div>
-          <div className="market-price"><span>CURRENT MARKET PRICE</span><motion.strong key={price} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>${money.format(price)}</motion.strong><small className="positive">+4.84% TODAY</small></div>
+          <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL PERP <i>/</i> USDC</h1></div></div>
+          <div className="market-price"><span>{market?.instrument.priceType === "MARK_PRICE" ? "CURRENT MARK PRICE" : "CURRENT SIMULATED MARK"}</span><motion.strong key={price ?? market?.status ?? "loading"} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>{price == null ? "--" : `$${money.format(Number(price))}`}</motion.strong>{market?.change.value != null ? <small className={Number(market.change.value) >= 0 ? "positive" : "negative"}>{optionalPercent(market.change.value)} {market.change.label === "24H" ? "24H" : "SIMULATION PERIOD"}</small> : <small>{marketLoading ? "LOADING MARKET" : "CHANGE UNAVAILABLE"}</small>}</div>
           <div className={`market-context ${marketDetailsOpen ? "open" : ""}`}>
-            <div className="market-context-funding"><span>FUNDING</span><b>{Number(funding) >= 0 ? "+" : ""}{(Number(funding) * 100).toFixed(3)}%</b><small>8H ESTIMATE</small></div>
-            <div className="market-context-pnl"><span>POSITION P&amp;L</span><b className={Number(pnl) >= 0 ? "positive" : "negative"}>{(Number(pnl) * 100).toFixed(1)}%</b><small>FRAME DERIVED</small></div>
-            <div className="market-context-updated"><span>UPDATED</span><b>{ageLabel(observedAt)}</b><small>{modeIsLive ? "LIVE OBSERVATION" : "DEMO FRAME"}</small></div>
+            <div className="market-context-funding"><span>FUNDING</span><b>{optionalPercent(funding, 3)}</b><small>{market?.funding.period === "1H" ? "1H RATE" : "DEMO STEP"}</small></div>
+            <div className="market-context-pnl"><span>POSITION P&amp;L</span><b className={valuation.pnlRatio != null && Number(valuation.pnlRatio) >= 0 ? "positive" : "negative"}>{optionalPercent(valuation.pnlRatio, 1)}</b><small>{valuation.pnlRatio == null ? "VALUATION UNAVAILABLE" : "SAME MARKET SNAPSHOT"}</small></div>
+            <div className="market-context-updated"><span>{modeIsLive ? "UPDATED" : "EVIDENCE"}</span><b>{modeIsLive ? (observedAt ? ageLabel(observedAt) : "--") : (market ? "STORED STEP" : "--")}</b><small>{market?.status ?? (marketLoading ? "LOADING" : "UNAVAILABLE")}</small></div>
           </div>
           <button className="market-details-toggle" aria-expanded={marketDetailsOpen} onClick={() => setMarketDetailsOpen((value) => !value)}>MARKET DETAILS<CaretRight size={14} /></button>
         </section>
         <section className="chart-zone">
-          <div className="chart-toolbar"><div><button className="active">1M</button><button>5M</button><button>1H</button></div><div><Crosshair size={16} /><span>{modeIsLive ? "HYPERLIQUID MARK" : "DETERMINISTIC PATH"}</span></div></div>
-          <MarketChart price={price} />
+          <div className="chart-toolbar"><div>{modeIsLive ? (["1m", "5m", "1h"] as const).map((item) => <button key={item} className={interval === item ? "active" : ""} aria-pressed={interval === item} onClick={() => onInterval(item)}>{item.toUpperCase()}</button>) : <button className="active" disabled>DEMO STEPS</button>}</div><div><Crosshair size={16} /><span>{market?.history.status === "AVAILABLE" ? `${market.provider.toUpperCase()} · ${market.history.interval.toUpperCase()}` : "HISTORY UNAVAILABLE"}</span></div></div>
+          <MarketChart points={market?.history.points ?? []} status={market?.status ?? (marketLoading ? "LOADING" : "UNAVAILABLE")} />
           <div className="chart-watermark"><BrandIcon size={56} weight="duotone" /><span>TRIGGERLANE FEED</span></div>
         </section>
         <section className="watch-zone">
@@ -968,44 +976,43 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
   );
 }
 
-function PortfolioView({ workspace }: { workspace: Workspace }) {
+function PortfolioView({ workspace, market }: { workspace: Workspace; market?: MarketView }) {
   const [ledgerAsset, setLedgerAsset] = useState<"ALL" | "SOL" | "USDC">("ALL");
   const [ledgerPage, setLedgerPage] = useState(1);
   const pageSize = 10;
-  const price = Number(workspace.frame.observations.PRICE.value);
   const sol = workspace.portfolio.balances.SOL;
   const usdc = workspace.portfolio.balances.USDC;
-  const solValue = Number(sol.quantity) * price;
+  const valuation = valuePortfolio({ solQuantity: sol.quantity, usdcQuantity: usdc.quantity, solReserved: sol.reserved, usdcReserved: usdc.reserved, solCostBasisUsdc: sol.costBasisUsdc, price: market?.price.value ?? null });
+  const price = market?.price.value == null ? null : Number(market.price.value);
+  const solValue = valuation.solValueUsdc == null ? null : Number(valuation.solValueUsdc);
   const usdcValue = Number(usdc.quantity);
-  const equity = solValue + usdcValue;
-  const reservedSolValue = Number(sol.reserved) * price;
-  const reservedUsdcValue = Number(usdc.reserved);
-  const reservedValue = reservedSolValue + reservedUsdcValue;
-  const availableValue = equity - reservedValue;
+  const equity = valuation.equityUsdc == null ? null : Number(valuation.equityUsdc);
+  const reservedValue = valuation.reservedValueUsdc == null ? null : Number(valuation.reservedValueUsdc);
+  const availableValue = valuation.availableValueUsdc == null ? null : Number(valuation.availableValueUsdc);
   const activeReservations = workspace.reservations.filter((reservation) => ["ACTIVE", "LOCKED"].includes(reservation.status));
-  const coverage = equity ? reservedValue / equity * 100 : 0;
+  const coverage = equity && reservedValue != null ? reservedValue / equity * 100 : null;
   const rebuilt = workspace.ledger.flatMap((transaction) => transaction.entries).reduce((totals, entry) => ({ ...totals, [entry.asset]: totals[entry.asset] + Number(entry.amount) }), { SOL: 0, USDC: 0 });
   const reconciled = Math.abs(rebuilt.SOL - Number(sol.quantity)) < .000000001 && Math.abs(rebuilt.USDC - Number(usdc.quantity)) < .000001;
   const filteredLedger = workspace.ledger.filter((transaction) => ledgerAsset === "ALL" || transaction.entries.some((entry) => entry.asset === ledgerAsset));
   const ledgerPages = Math.max(1, Math.ceil(filteredLedger.length / pageSize));
   const currentLedgerPage = Math.min(ledgerPage, ledgerPages);
   const visibleLedger = filteredLedger.slice((currentLedgerPage - 1) * pageSize, currentLedgerPage * pageSize);
-  const solShare = equity ? solValue / equity * 100 : 0;
-  const usdcShare = 100 - solShare;
+  const solShare = equity && solValue != null ? solValue / equity * 100 : 50;
+  const usdcShare = equity ? 100 - solShare : 50;
   const lockedCount = activeReservations.filter((reservation) => reservation.status === "LOCKED").length;
 
   return (
     <main className="page-view portfolio-page">
       <div className="page-title portfolio-title"><div><span className="eyebrow">CAPITAL CONTROL</span><h1>Your virtual portfolio</h1><p>See what you own, what remains available, and exactly which trigger controls every reserved amount.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
 
-      <section className="portfolio-provenance" aria-label="Portfolio data provenance"><span><i />{workspace.portfolio.dataMode} PORTFOLIO</span><b>SIMULATED CAPITAL</b><small>Valued from stored frame {workspace.frame.id.slice(0, 8)} at ${money.format(price)} / SOL</small></section>
+      <section className="portfolio-provenance" aria-label="Portfolio data provenance"><span><i />{workspace.portfolio.dataMode} VALUATION</span><b>SIMULATED CAPITAL</b><small>{market?.price.value == null ? "Current valuation unavailable; owned quantities remain unchanged" : `Valued from ${market.provider} snapshot ${market.snapshotId?.slice(0, 12) ?? "unavailable"} at $${money.format(Number(market.price.value))} / SOL`}</small></section>
 
       <section className="portfolio-overview" aria-label="Portfolio overview">
-        <div className="equity-statement"><span>TOTAL SIMULATED EQUITY</span><strong>${money.format(equity)}</strong><p>{quantity.format(Number(sol.quantity))} SOL plus {quantity.format(Number(usdc.quantity))} USDC, valued on the current stored frame.</p><div className="capital-equation" aria-label="Capital reconciliation equation"><span><small>AVAILABLE</small><b>${money.format(availableValue)}</b></span><i>+</i><span><small>RESERVED</small><b>${money.format(reservedValue)}</b></span><i>=</i><span><small>TOTAL</small><b>${money.format(equity)}</b></span></div></div>
+        <div className="equity-statement"><span>TOTAL SIMULATED EQUITY</span><strong>{equity == null ? "--" : `$${money.format(equity)}`}</strong><p>{quantity.format(Number(sol.quantity))} SOL plus {quantity.format(Number(usdc.quantity))} USDC, marked from the same snapshot shown on Trade.</p><div className="capital-equation" aria-label="Capital reconciliation equation"><span><small>AVAILABLE</small><b>{availableValue == null ? "--" : `$${money.format(availableValue)}`}</b></span><i>+</i><span><small>RESERVED</small><b>{reservedValue == null ? "--" : `$${money.format(reservedValue)}`}</b></span><i>=</i><span><small>TOTAL</small><b>{equity == null ? "--" : `$${money.format(equity)}`}</b></span></div></div>
         <dl className="capital-totals">
-          <div><dt>AVAILABLE</dt><dd><b>${money.format(availableValue)}</b><small>free for new triggers</small></dd></div>
-          <div><dt>RESERVED</dt><dd><b>${money.format(reservedValue)}</b><small>{activeReservations.length} capital assignment{activeReservations.length === 1 ? "" : "s"}</small></dd></div>
-          <div><dt>AUTOMATION COVERAGE</dt><dd><b>{coverage.toFixed(1)}%</b><small>of equity controlled</small></dd></div>
+          <div><dt>AVAILABLE</dt><dd><b>{availableValue == null ? "--" : `$${money.format(availableValue)}`}</b><small>free for new triggers</small></dd></div>
+          <div><dt>RESERVED</dt><dd><b>{reservedValue == null ? "--" : `$${money.format(reservedValue)}`}</b><small>{activeReservations.length} capital assignment{activeReservations.length === 1 ? "" : "s"}</small></dd></div>
+          <div><dt>AUTOMATION COVERAGE</dt><dd><b>{coverage == null ? "--" : `${coverage.toFixed(1)}%`}</b><small>of marked equity controlled</small></dd></div>
           <div><dt>LOCKED</dt><dd><b>{lockedCount ? `${lockedCount} settling` : "$0.00"}</b><small>{lockedCount ? "settlement in progress" : "nothing in flight"}</small></dd></div>
         </dl>
       </section>
@@ -1014,8 +1021,8 @@ function PortfolioView({ workspace }: { workspace: Workspace }) {
         <header><div><span className="eyebrow">OWNED CAPITAL</span><h2 id="capital-map-title">Where every simulated dollar sits</h2><p>Solid color is available. The hatched edge is already assigned to a trigger.</p></div><div className={`reconciliation-mark ${reconciled ? "verified" : "mismatch"}`}><CheckCircle size={20} weight="fill" /><span><b>{reconciled ? "LEDGER RECONCILED" : "RECONCILIATION MISMATCH"}</b><small>{workspace.ledger.length} immutable transaction{workspace.ledger.length === 1 ? "" : "s"}</small></span></div></header>
         <div className="capital-map" style={{ gridTemplateColumns: `${Math.max(solShare, 18)}fr ${Math.max(usdcShare, 18)}fr` }}>
           <article className="capital-asset sol-capital">
-            <div><span className="asset-symbol sol-symbol">S</span><span><b>SOL</b><small>{solShare.toFixed(1)}% OF EQUITY</small></span></div>
-            <strong>${money.format(solValue)}</strong>
+            <div><span className="asset-symbol sol-symbol">S</span><span><b>SOL</b><small>{solValue == null ? "MARK UNAVAILABLE" : `${solShare.toFixed(1)}% OF EQUITY`}</small></span></div>
+            <strong>{solValue == null ? "--" : `$${money.format(solValue)}`}</strong>
             <dl><div><dt>Owned</dt><dd>{quantity.format(Number(sol.quantity))} SOL</dd></div><div><dt>Available</dt><dd>{quantity.format(Number(sol.available))} SOL</dd></div><div><dt>Reserved</dt><dd>{quantity.format(Number(sol.reserved))} SOL</dd></div></dl>
             <div className="asset-reservation-meter"><span style={{ width: `${Number(sol.quantity) ? Number(sol.reserved) / Number(sol.quantity) * 100 : 0}%` }} /></div>
           </article>
@@ -1031,13 +1038,13 @@ function PortfolioView({ workspace }: { workspace: Workspace }) {
       <section className="reservation-section" aria-labelledby="reservation-title">
         <header><div><span className="eyebrow">CAPITAL ASSIGNMENTS</span><h2 id="reservation-title">Every reservation has an owner</h2><p>These amounts cannot be promised to another trigger until released or settled.</p></div><b>{activeReservations.length} ACTIVE</b></header>
         {activeReservations.length ? <div className="reservation-list">{activeReservations.map((reservation) => {
-          const value = Number(reservation.amount) * (reservation.asset === "SOL" ? price : 1);
+          const value = reservation.asset === "SOL" ? price == null ? null : Number(reservation.amount) * price : Number(reservation.amount);
           const owner = workspace.ghosts.find((ghost) => ghost.id === reservation.ghostId);
           const slippageBps = owner?.maxSlippageBps ?? 0;
           const multiplier = reservation.side === "SELL" ? 1 - slippageBps / 10_000 : 1 + slippageBps / 10_000;
-          const estimatedOutput = reservation.side === "SELL" ? `${quantity.format(Number(reservation.amount) * price * multiplier)} USDC` : `${quantity.format(Number(reservation.amount) / (price * multiplier))} SOL`;
-          return <article className="reservation-row" key={reservation.id}><div><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><span><a href={`/ghost/${reservation.ghostId}`}>{reservation.ghostName}</a><small>{reservation.status} · {reservation.side} {reservation.asset === "SOL" ? "SOL" : "WITH USDC"}</small></span></div><div><span>CONTROLLED NOW</span><b>{quantity.format(Number(reservation.amount))} {reservation.asset}</b><small>${money.format(value)} current value</small></div><div><span>IF IT EXECUTED NOW</span><b>{reservation.side} → {estimatedOutput}</b><small>illustration at frame price + {slippageBps} bps</small></div><a className="inspect-reservation" href={`/ghost/${reservation.ghostId}`} title={`Inspect ${reservation.ghostName}`}><Eye size={18} /></a><div className="reservation-owner-chain" aria-label={`${reservation.ghostName} reservation ownership`}><span>SIMULATED PORTFOLIO</span><ArrowRight size={13} /><span>{reservation.ghostName}</span><ArrowRight size={13} /><b>{reservation.status} RESERVATION</b></div><details className="reservation-trace"><summary><BracketsCurly size={15} />TRACE OWNERSHIP</summary><dl><div><dt>Reservation ID</dt><dd>{reservation.id}</dd></div><div><dt>Owner trigger</dt><dd>{reservation.ghostId}</dd></div><div><dt>Created</dt><dd>{dateTime(reservation.createdAt)}</dd></div><div><dt>Trigger deadline</dt><dd>{owner ? dateTime(owner.expiresAt) : "Unavailable"}</dd></div></dl></details></article>;
-        })}</div> : <div className="portfolio-empty"><BrandIcon size={32} weight="duotone" /><div><h3>No capital is reserved</h3><strong>${money.format(equity)} available</strong><p>Every simulated dollar is free for a new trigger. Starting one creates a named ownership trail here.</p></div><a href="/trade">BUILD A TRIGGER<ArrowRight size={15} /></a></div>}
+          const estimatedOutput = price == null ? "MARK UNAVAILABLE" : reservation.side === "SELL" ? `${quantity.format(Number(reservation.amount) * price * multiplier)} USDC` : `${quantity.format(Number(reservation.amount) / (price * multiplier))} SOL`;
+          return <article className="reservation-row" key={reservation.id}><div><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><span><a href={`/ghost/${reservation.ghostId}`}>{reservation.ghostName}</a><small>{reservation.status} · {reservation.side} {reservation.asset === "SOL" ? "SOL" : "WITH USDC"}</small></span></div><div><span>CONTROLLED NOW</span><b>{quantity.format(Number(reservation.amount))} {reservation.asset}</b><small>{value == null ? "Current value unavailable" : `$${money.format(value)} current value`}</small></div><div><span>IF IT EXECUTED NOW</span><b>{reservation.side} → {estimatedOutput}</b><small>{price == null ? "Waiting for a current market mark" : `illustration at ${market?.provider ?? "market"} mark + ${slippageBps} bps`}</small></div><a className="inspect-reservation" href={`/ghost/${reservation.ghostId}`} title={`Inspect ${reservation.ghostName}`}><Eye size={18} /></a><div className="reservation-owner-chain" aria-label={`${reservation.ghostName} reservation ownership`}><span>SIMULATED PORTFOLIO</span><ArrowRight size={13} /><span>{reservation.ghostName}</span><ArrowRight size={13} /><b>{reservation.status} RESERVATION</b></div><details className="reservation-trace"><summary><BracketsCurly size={15} />TRACE OWNERSHIP</summary><dl><div><dt>Reservation ID</dt><dd>{reservation.id}</dd></div><div><dt>Owner trigger</dt><dd>{reservation.ghostId}</dd></div><div><dt>Created</dt><dd>{dateTime(reservation.createdAt)}</dd></div><div><dt>Trigger deadline</dt><dd>{owner ? dateTime(owner.expiresAt) : "Unavailable"}</dd></div></dl></details></article>;
+        })}</div> : <div className="portfolio-empty"><BrandIcon size={32} weight="duotone" /><div><h3>No capital is reserved</h3><strong>{equity == null ? "Valuation unavailable" : `$${money.format(equity)} available`}</strong><p>Every simulated unit remains free for a new trigger. Starting one creates a named ownership trail here.</p></div><a href="/trade">BUILD A TRIGGER<ArrowRight size={15} /></a></div>}
       </section>
 
       <section className="ledger-section" aria-labelledby="ledger-title">
@@ -1149,6 +1156,7 @@ function DetailView({ workspace, ghostId }: { workspace: Workspace; ghostId: str
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["workspace"] }),
         queryClient.invalidateQueries({ queryKey: ["ghost", ghostId] }),
+        queryClient.invalidateQueries({ queryKey: ["market-view"] }),
       ]);
     },
   });
@@ -1282,13 +1290,20 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [marketInterval, setMarketInterval] = useState<"1m" | "5m" | "1h">("5m");
 
   useEffect(() => {
     api("/api/session/anonymous", { method: "POST" }).then(() => setSessionReady(true)).catch((error) => setBootError(error instanceof Error ? error.message : "Simulation could not start."));
   }, []);
   const workspaceQuery = useQuery({ queryKey: ["workspace"], queryFn: () => api<Workspace>("/api/workspace"), enabled: sessionReady });
   const workspace = workspaceQuery.data;
-  const liveQuery = useQuery({ queryKey: ["live-market"], queryFn: () => api<LiveMarket>("/api/live-market"), enabled: workspace?.portfolio.dataMode === "LIVE", refetchInterval: 5000 });
+  const marketMode = workspace?.portfolio.dataMode;
+  const marketQuery = useQuery({
+    queryKey: ["market-view", marketMode, marketMode === "LIVE" ? marketInterval : "DEMO_STEP"],
+    queryFn: () => api<MarketView>(`/api/market-view?interval=${marketMode === "LIVE" ? marketInterval : "5m"}`),
+    enabled: Boolean(workspace),
+    refetchInterval: marketMode === "LIVE" ? 5_000 : false,
+  });
   const diagnosticsQuery = useQuery({ queryKey: ["diagnostics"], queryFn: () => api<Diagnostics>("/health/diagnostics"), enabled: Boolean(workspace), refetchInterval: 5000 });
   const capabilitiesQuery = useQuery({ queryKey: ["capabilities"], queryFn: () => api<RuntimeCapabilities>("/api/capabilities") });
 
@@ -1298,6 +1313,7 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
     stream.onmessage = (event) => {
       const payload = JSON.parse(event.data) as { type: string };
       if (!["heartbeat", "connected"].includes(payload.type)) void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      if (payload.type.startsWith("market.")) void queryClient.invalidateQueries({ queryKey: ["market-view"] });
     };
     return () => stream.close();
   }, [queryClient, sessionReady]);
@@ -1308,18 +1324,20 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
     return () => window.removeEventListener("keydown", close);
   }, []);
 
-  const setMode = useMutation({ mutationFn: (mode: "DEMO" | "LIVE") => api<Workspace>("/api/data-mode", { method: "POST", body: JSON.stringify({ mode }) }), onSuccess: (data) => queryClient.setQueryData(["workspace"], data) });
+  const setMode = useMutation({ mutationFn: (mode: "DEMO" | "LIVE") => api<Workspace>("/api/data-mode", { method: "POST", body: JSON.stringify({ mode }) }), onSuccess: (data) => { queryClient.setQueryData(["workspace"], data); void queryClient.invalidateQueries({ queryKey: ["market-view"] }); } });
   const clearSession = useMutation({ mutationFn: () => api("/api/session", { method: "DELETE" }), onSuccess: () => window.location.reload() });
 
   const fatalMessage = bootError ?? (workspaceQuery.error instanceof Error ? workspaceQuery.error.message : null);
   if (fatalMessage) return <div className="fatal-state" role="alert"><BrandIcon size={44} /><span className="eyebrow">WORKSPACE CONNECTION FAILED</span><h1>Simulation unavailable</h1><p>{fatalMessage}</p><div className="capital-safe"><ShieldCheck size={17} /><span><b>No capital was moved.</b> Your saved Simulation remains unchanged.</span></div><button onClick={() => window.location.reload()}>RETRY CONNECTION</button></div>;
   if (!workspace) return <LoadingView />;
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
+  const market = marketQuery.data?.mode === workspace.portfolio.dataMode ? marketQuery.data : undefined;
   const capabilities = capabilitiesQuery.data ?? { environment: "development", executionMode: "SANDBOX", features: { aiComposer: true, replay: true, multiStage: false, rialo: false, demoFeed: true, advancedConditions: false } };
-  const sourceAge = modeIsLive && liveQuery.data ? Math.max(0, (Date.now() - new Date(liveQuery.data.receivedAt).getTime()) / 1000).toFixed(1) : Math.max(0, (Date.now() - new Date(workspace.frame.assembledAt).getTime()) / 1000).toFixed(0);
-  const provider = providerLabel(modeIsLive ? liveQuery.data?.provider ?? "Hyperliquid" : workspace.frame.observations.PRICE.provider);
-  const feedStatus = liveQuery.isError ? "UNAVAILABLE" : modeIsLive ? "MONITORING ONLY" : "CONNECTED";
-  const sourceTime = modeIsLive ? "SOURCE TIME UNAVAILABLE" : dateTime(workspace.frame.observations.PRICE.sourceTimestamp ?? workspace.frame.observations.PRICE.receivedAt);
+  const marketTime = market?.sourceTimestamp ?? market?.receivedAt ?? null;
+  const sourceAge = marketTime ? Math.max(0, (Date.now() - new Date(marketTime).getTime()) / 1000).toFixed(modeIsLive ? 1 : 0) : "--";
+  const provider = providerLabel(market?.provider ?? (modeIsLive ? "Hyperliquid" : workspace.frame.observations.PRICE.provider));
+  const feedStatus = marketQuery.isPending ? "LOADING" : market?.status ?? "UNAVAILABLE";
+  const sourceTime = market?.sourceTimestamp ? dateTime(market.sourceTimestamp) : market?.receivedAt ? `RECEIVED ${dateTime(market.receivedAt)}` : "UNAVAILABLE";
   const engineStatus = diagnosticsQuery.data?.workerLease.active ? "OPERATIONAL" : diagnosticsQuery.data ? "RECONNECTING" : "CHECKING";
 
   return (
@@ -1338,19 +1356,19 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
         <div className="simulation-menu-heading"><div><span className="eyebrow">ENVIRONMENT</span><strong>{modeIsLive ? "Live monitoring" : "Simulation"}</strong></div><span className={modeIsLive ? "monitoring" : "eligible"}>{modeIsLive ? "VIEW ONLY" : "EXECUTION ELIGIBLE"}</span></div>
         <div className="simulation-mode-switch" role="group" aria-label="Market data mode"><button aria-pressed={!modeIsLive} className={!modeIsLive ? "active" : ""} onClick={() => setMode.mutate("DEMO")}>SIMULATION</button><button aria-pressed={modeIsLive} className={modeIsLive ? "active" : ""} onClick={() => setMode.mutate("LIVE")}>LIVE DATA</button></div>
         {modeIsLive && <div className="simulation-warning"><Warning size={16} /><span><b>Monitoring only</b><small>Live observations cannot execute or settle simulated capital.</small></span></div>}
-        <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Freshness</dt><dd>{sourceAge}s ago</dd></div><div><dt>Frame</dt><dd>{workspace.frame.completeness}</dd></div></dl>
+        <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>{modeIsLive ? "Freshness" : "Evidence"}</dt><dd>{modeIsLive ? (sourceAge === "--" ? "UNAVAILABLE" : `${sourceAge}s ago`) : (market ? "STORED FRAME" : "UNAVAILABLE")}</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
         <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>{modeIsLive ? "DISABLED" : "SIMULATED · AVAILABLE"}</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
       </motion.div>}</AnimatePresence>
       <AnimatePresence>{accountOpen && <motion.div id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button><button className="account-danger" onClick={() => clearSession.mutate()}><Power size={16} />CLEAR SESSION</button></motion.div>}</AnimatePresence>
-      {view === "trade" && <TradeView workspace={workspace} live={liveQuery.data} capabilities={capabilities} />}
+      {view === "trade" && <TradeView workspace={workspace} market={market} marketLoading={marketQuery.isPending || marketQuery.isFetching && !market} interval={marketInterval} onInterval={setMarketInterval} capabilities={capabilities} />}
       {view === "ghosts" && <GhostsView workspace={workspace} />}
-      {view === "portfolio" && <PortfolioView workspace={workspace} />}
+      {view === "portfolio" && <PortfolioView workspace={workspace} market={market} />}
       {view === "history" && <HistoryView workspace={workspace} />}
       {view === "discover" && <DiscoverView workspace={workspace} />}
       {view === "detail" && ghostId && <DetailView workspace={workspace} ghostId={ghostId} />}
       <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio"><Pulse size={18} />Portfolio</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Discover</a><button onClick={() => { setAccountOpen(true); setConnectionsOpen(false); }}><UserCircle size={18} />Account</button></nav>
       <SandboxDisclaimer />
-      <footer className="system-footer"><span><i className={modeIsLive ? "amber" : "green"} />{modeIsLive ? "LIVE DATA · MONITORING ONLY" : "DEMO FEED · EXECUTION ELIGIBLE"}</span><span>SOL/USDC</span><span>FRAME {workspace.frame.id.slice(0, 8)}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
+      <footer className="system-footer"><span><i className={modeIsLive ? "amber" : "green"} />{modeIsLive ? "LIVE DATA · MONITORING ONLY" : "DEMO FEED · EXECUTION ELIGIBLE"}</span><span>SOL-PERP/USDC</span><span>SNAPSHOT {market?.snapshotId?.slice(0, 8) ?? "PENDING"}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
     </AppShell>
   );
 }

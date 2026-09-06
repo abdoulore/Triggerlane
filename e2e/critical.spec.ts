@@ -169,9 +169,9 @@ test("landing remains framed and nonblank on mobile", async ({ page }, testInfo)
 
 test("creates, arms, settles, and receipts one Ghost exactly once", async ({ page }) => {
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: "SOL / USDC" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SOL PERP / USDC" })).toBeVisible();
   await expect(page.getByText("DEMO FEED · EXECUTION ELIGIBLE")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Market overview" })).toContainText("UPDATED");
+  await expect(page.getByRole("region", { name: "Market overview" })).toContainText("EVIDENCE");
   await expect(page.getByRole("region", { name: "Capital commitment preview" })).toContainText("10 SOL");
   await expect(page.getByLabel(/Trigger lifecycle:/)).toContainText("WATCHING");
   await expect(page.locator(".waiting-reason")).toBeVisible();
@@ -296,7 +296,7 @@ test("Live Data visibly refuses execution", async ({ page }) => {
 test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, testInfo) => {
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
-  await expect(page.getByText("CURRENT MARKET PRICE")).toBeVisible();
+  await expect(page.getByText(/^CURRENT (MARK PRICE|SIMULATED MARK)$/)).toBeVisible();
   await expect(page.getByLabel("Compact Signal Engine state")).toBeVisible();
   await expect(page.getByLabel("Capital commitment preview")).toBeVisible();
   await expect(page.getByLabel("What happens when this trigger starts")).toBeVisible();
@@ -376,7 +376,7 @@ test("Composer supports one signal or an explicit combination", async ({ page },
 test("mobile monitoring does not overflow horizontally", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: "SOL / USDC" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SOL PERP / USDC" })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
 });

@@ -20,8 +20,10 @@ import {
   type GhostDraft,
   type Metric,
   type MetricObservation,
+  type MarketView,
 } from "@ghost/domain";
 import { one, rows, type Queryable } from "./db.js";
+import { HyperliquidMarketProvider, type LiveHistoryInterval } from "./integrations/hyperliquid-market-provider.js";
 import { SandboxAutomationAdapter } from "./integrations/sandbox/sandbox-automation-adapter.js";
 import { RialoAutomationAdapter } from "./integrations/rialo/rialo-automation-adapter.js";
 
@@ -162,6 +164,7 @@ export class GhostService {
       beforePortfolioReplacement?: () => void | Promise<void>;
       beforeSettlementCommit?: () => void | Promise<void>;
     } = {},
+    private readonly marketProvider: Pick<HyperliquidMarketProvider, "view"> = new HyperliquidMarketProvider(),
   ) {}
 
   executionTargets() {
@@ -286,12 +289,63 @@ export class GhostService {
   }
 
   async markets() {
-    return { markets: [{ asset: "SOL", quoteAsset: "USDC", symbol: "SOL/USDC", metrics: ["PRICE", "FUNDING", "PNL"], modes: ["DEMO", "LIVE"], liveExecutionEligible: false }] };
+    return { markets: [{ asset: "SOL", instrument: "SOL-PERP", quoteAsset: "USDC", symbol: "SOL-PERP/USDC", priceType: "MARK_PRICE", metrics: ["PRICE", "FUNDING", "PNL"], modes: ["DEMO", "LIVE"], liveExecutionEligible: false }] };
   }
 
   async market(asset: string) {
     if (asset.toUpperCase() !== "SOL") throw new AppError("MARKET_NOT_FOUND", "Only SOL/USDC is supported.", 404);
     return (await this.markets()).markets[0];
+  }
+
+  async marketView(userId: string, requestedInterval: string = "5m"): Promise<MarketView> {
+    const portfolio = await this.activePortfolio(this.database, userId);
+    if (portfolio.data_mode === "LIVE") {
+      if (!["1m", "5m", "1h"].includes(requestedInterval)) throw new AppError("UNSUPPORTED_MARKET_INTERVAL", "Choose a supported Live chart interval.", 422);
+      return this.marketProvider.view(requestedInterval as LiveHistoryInterval);
+    }
+
+    const frame = await this.latestFrame(this.database, portfolio.id) ?? await this.createDemoFrame(this.database, portfolio, portfolio.demo_step);
+    const priceObservation = frame.observations.PRICE;
+    const fundingObservation = frame.observations.FUNDING;
+    const observations = await rows<{ id: string; value_decimal: string; source_timestamp: string | null; received_at: string }>(
+      this.database,
+      `SELECT id, value_decimal::text, source_timestamp, received_at
+       FROM market_observations
+       WHERE portfolio_id=$1 AND metric='PRICE' AND provenance='DEMO'
+       ORDER BY received_at, id
+       LIMIT 500`,
+      [portfolio.id],
+    );
+    const points = observations.map((observation) => ({
+      id: observation.id,
+      at: new Date(observation.source_timestamp ?? observation.received_at).toISOString(),
+      value: observation.value_decimal,
+    }));
+    const first = points[0];
+    const last = points.at(-1);
+    const change = first && last && first.id !== last.id && new Decimal(first.value).gt(0)
+      ? new Decimal(last.value).minus(first.value).div(first.value).toDecimalPlaces(8).toFixed()
+      : null;
+    return {
+      mode: "DEMO",
+      instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "SIMULATED_MARK" },
+      provider: priceObservation.provider,
+      snapshotId: frame.id,
+      price: { value: priceObservation.value, unit: "USDC_PER_SOL" },
+      funding: { value: fundingObservation.value, unit: "RATIO", period: "DEMO_STEP" },
+      sourceTimestamp: priceObservation.sourceTimestamp,
+      receivedAt: priceObservation.receivedAt,
+      status: frame.completeness === "COMPLETE" ? "FRESH" : frame.completeness === "STALE" ? "STALE" : "UNAVAILABLE",
+      executionEligible: frame.executionEligible,
+      eligibilityReason: frame.executionEligible ? "Complete deterministic Demo frame." : "The stored Demo frame is not execution eligible.",
+      change: { value: change, label: change == null ? null : "SIMULATION_PERIOD" },
+      history: {
+        status: points.length > 0 ? "AVAILABLE" : "UNAVAILABLE",
+        interval: "DEMO_STEP",
+        points,
+        reason: points.length > 0 ? null : "Advance the Demo Feed to record the first observation.",
+      },
+    };
   }
 
   async dataMode(userId: string) {
@@ -1443,33 +1497,7 @@ export class GhostService {
     });
   }
 
-  async liveMarket(): Promise<Record<string, unknown>> {
-    const receivedAt = now();
-    const response = await fetch("https://api.hyperliquid.xyz/info", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "metaAndAssetCtxs" }),
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!response.ok) throw new AppError("LIVE_PROVIDER_ERROR", "Hyperliquid Live Data is unavailable.", 503);
-    const payload = (await response.json()) as [
-      { universe: Array<{ name: string }> },
-      Array<{ markPx: string; oraclePx: string; midPx?: string; funding: string }>,
-    ];
-    const index = payload[0].universe.findIndex((asset) => asset.name === "SOL");
-    if (index < 0 || !payload[1][index]) throw new AppError("LIVE_MARKET_NOT_FOUND", "SOL was not found in the provider payload.", 503);
-    const context = payload[1][index];
-    return {
-      market: "SOL/USDC",
-      provider: "Hyperliquid",
-      price: context.markPx,
-      oraclePrice: context.oraclePx,
-      midPrice: context.midPx ?? null,
-      funding: context.funding,
-      receivedAt,
-      sourceTimestamp: null,
-      executionEligible: false,
-      eligibilityReason: "The provider envelope has no documented source timestamp.",
-    };
+  async liveMarket(): Promise<MarketView> {
+    return this.marketProvider.view("5m");
   }
 }
