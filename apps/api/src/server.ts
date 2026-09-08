@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import { ZodError } from "zod";
@@ -22,7 +22,12 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   if (process.env.NODE_ENV === "production" && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
     throw new Error("SESSION_SECRET must contain at least 32 characters in production.");
   }
-  const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
+  const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
+  if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0 || trustedProxyHops > 2) {
+    throw new Error("TRUST_PROXY_HOPS must be 0, 1, or 2.");
+  }
+  const trustProxy = trustedProxyHops > 0 ? (_address: string, hop: number) => hop < trustedProxyHops : false;
+  const app = Fastify({ logger: process.env.NODE_ENV !== "test", trustProxy });
   const db = database ?? (await getDatabase());
   const service = new GhostService(db);
   const config = runtimeConfig();
@@ -32,6 +37,9 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   let requestCount = 0;
   let errorCount = 0;
   let totalResponseMs = 0;
+  const rateWindows = new Map<string, { count: number; resetsAt: number }>();
+  const sseBySession = new Map<string, number>();
+  let sseTotal = 0;
   events.setMaxListeners(200);
 
   await app.register(cookie, {
@@ -41,6 +49,32 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
     credentials: true,
+  });
+
+  function consumeLimit(key: string, maximum: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
+    const timestamp = Date.now();
+    if (rateWindows.size > 10_000) {
+      for (const [windowKey, windowValue] of rateWindows) if (windowValue.resetsAt <= timestamp) rateWindows.delete(windowKey);
+    }
+    const current = rateWindows.get(key);
+    const window = !current || current.resetsAt <= timestamp ? { count: 0, resetsAt: timestamp + windowMs } : current;
+    window.count += 1;
+    rateWindows.set(key, window);
+    return { allowed: window.count <= maximum, retryAfterSeconds: Math.max(1, Math.ceil((window.resetsAt - timestamp) / 1000)) };
+  }
+
+  function rejectLimited(reply: FastifyReply, retryAfterSeconds: number, code: string, message: string) {
+    return reply.header("retry-after", retryAfterSeconds).status(429).send({ error: { code, message, retryAfterSeconds } });
+  }
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (!request.url.startsWith("/api/")) return;
+    const ipLimit = consumeLimit(`ip:${request.ip}`, config.limits.requestsPerIpPerMinute, 60_000);
+    if (!ipLimit.allowed) return rejectLimited(reply, ipLimit.retryAfterSeconds, "IP_RATE_LIMITED", "Too many requests from this network. Try again shortly.");
+    if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS" || request.url === "/api/session/anonymous") return;
+    const sessionKey = readSessionToken(request) ?? `unauthenticated:${request.ip}`;
+    const mutationLimit = consumeLimit(`mutation:${sessionKey}`, config.limits.mutationsPerSessionPerMinute, 60_000);
+    if (!mutationLimit.allowed) return rejectLimited(reply, mutationLimit.retryAfterSeconds, "SESSION_RATE_LIMITED", "Too many changes in this paper-trading session. Try again shortly.");
   });
 
   app.addHook("onResponse", async (request, reply) => {
@@ -140,6 +174,8 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     const currentToken = readSessionToken(request);
     const current = await service.resolveSession(currentToken);
     if (current) return { userId: current.userId, expiresAt: current.expiresAt };
+    const creationLimit = consumeLimit(`anonymous:${request.ip}`, config.limits.anonymousSessionsPerIpPerHour, 60 * 60_000);
+    if (!creationLimit.allowed) return rejectLimited(reply, creationLimit.retryAfterSeconds, "SESSION_CREATION_LIMITED", "Too many new paper accounts were created from this network. Try again later.");
     const requestedMode = (request.body as { initialMode?: string } | undefined)?.initialMode;
     const session = await service.createAnonymousSession(requestedMode === "DEMO" ? "DEMO" : "LIVE");
     await service.trackAnalytics(session.userId, "sandbox_started", { environment: config.environment });
@@ -191,6 +227,10 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   app.get("/api/executions/:id", { preHandler: requireSession }, async (request) => service.execution(request.userId!, (request.params as { id: string }).id));
 
   app.post("/api/ghosts", { preHandler: requireSession }, async (request, reply) => {
+    const count = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM ghosts WHERE user_id=$1", [request.userId!]);
+    if (Number(count.rows[0]?.count ?? 0) >= config.limits.triggersPerAccount) {
+      return reply.status(429).send({ error: { code: "TRIGGER_QUOTA_REACHED", message: `This account can store up to ${config.limits.triggersPerAccount} triggers.` } });
+    }
     const ghost = await service.createGhost(request.userId!, request.body);
     changed(request.userId!, "ghost.status.updated", { ghostId: ghost.id, status: ghost.status });
     return reply.status(201).send(ghost);
@@ -272,6 +312,13 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   app.get("/api/live-market", { preHandler: requireSession }, async () => service.liveMarket());
 
   app.get("/api/events", { preHandler: requireSession }, async (request, reply) => {
+    const sessionKey = request.sessionToken!;
+    const sessionConnections = sseBySession.get(sessionKey) ?? 0;
+    if (sessionConnections >= config.limits.sseConnectionsPerSession || sseTotal >= config.limits.sseConnectionsTotal) {
+      return reply.status(429).send({ error: { code: "SSE_CONNECTION_LIMIT", message: "Too many live update connections are open. Close another Triggerlane tab and retry." } });
+    }
+    sseBySession.set(sessionKey, sessionConnections + 1);
+    sseTotal += 1;
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
@@ -287,6 +334,10 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     request.raw.on("close", () => {
       clearInterval(heartbeat);
       events.off(request.userId!, write);
+      const remaining = Math.max(0, (sseBySession.get(sessionKey) ?? 1) - 1);
+      if (remaining) sseBySession.set(sessionKey, remaining);
+      else sseBySession.delete(sessionKey);
+      sseTotal = Math.max(0, sseTotal - 1);
       reply.raw.end();
     });
   });
