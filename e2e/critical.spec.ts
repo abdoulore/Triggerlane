@@ -672,6 +672,9 @@ test("Ghost command center makes state, distance, capital, and actions scannable
   await page.getByRole("button", { name: "Draft", exact: true }).click();
   await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
   await expect(page.locator(".ghost-state-bands").getByText("Near Ready", { exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Draft", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "All states" }).click();
   await page.locator(".ghost-command-controls").getByLabel("Action").selectOption("BUY");
   await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
@@ -845,6 +848,11 @@ test("browser-bound Account explains access and requires confirmation before cle
 
 test("Trigger Detail exposes guarded lifecycle actions", async ({ page }) => {
   await openWatchingGhostDetail(page);
+  await page.getByRole("button", { name: "DRAFT" }).click();
+  await expect(page.getByText("HISTORICAL INSPECTION")).toBeVisible();
+  await expect(page.getByText(/current stored state remains WATCHING/i)).toBeVisible();
+  await page.getByRole("button", { name: "WATCHING" }).click();
+  await expect(page.getByText("HISTORICAL INSPECTION")).toHaveCount(0);
   const controls = page.getByRole("region", { name: "Trigger controls" });
   await expect(controls.getByRole("button", { name: "Pause trigger" })).toBeEnabled();
   await controls.getByRole("button", { name: "Pause trigger" }).click();

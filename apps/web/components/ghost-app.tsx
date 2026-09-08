@@ -905,6 +905,7 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
   const [sortBy, setSortBy] = useState<"READINESS" | "CAPITAL" | "EXPIRY" | "RECENT">("READINESS");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [filtersRestored, setFiltersRestored] = useState(false);
   const pageSize = 24;
   const price = Number(workspace.frame.observations.PRICE.value);
   const terminalStatuses = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"];
@@ -947,6 +948,27 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
   const nextExpiry = [...workspace.ghosts.filter((ghost) => !terminalStatuses.includes(ghost.status))].sort((left, right) => new Date(left.expiresAt).getTime() - new Date(right.expiresAt).getTime())[0];
   const filtersActive = statusFilter !== "ALL" || actionFilter !== "ALL" || proximityFilter !== "ALL" || search.length > 0;
 
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.sessionStorage.getItem("triggerlane:trigger-filters:v1") ?? "null") as { statusFilter?: typeof statusFilter; actionFilter?: typeof actionFilter; proximityFilter?: typeof proximityFilter; sortBy?: typeof sortBy; search?: string } | null;
+      if (stored) {
+        if (["ALL", "WATCHING", "PAUSED", "DRAFT", "TERMINAL"].includes(stored.statusFilter ?? "")) setStatusFilter(stored.statusFilter!);
+        if (["ALL", "BUY", "SELL"].includes(stored.actionFilter ?? "")) setActionFilter(stored.actionFilter!);
+        if (["ALL", "NEAR", "BUILDING", "FAR"].includes(stored.proximityFilter ?? "")) setProximityFilter(stored.proximityFilter!);
+        if (["READINESS", "CAPITAL", "EXPIRY", "RECENT"].includes(stored.sortBy ?? "")) setSortBy(stored.sortBy!);
+        if (typeof stored.search === "string") setSearch(stored.search);
+      }
+    } catch {
+      window.sessionStorage.removeItem("triggerlane:trigger-filters:v1");
+    }
+    setFiltersRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!filtersRestored) return;
+    window.sessionStorage.setItem("triggerlane:trigger-filters:v1", JSON.stringify({ statusFilter, actionFilter, proximityFilter, sortBy, search }));
+  }, [actionFilter, filtersRestored, proximityFilter, search, sortBy, statusFilter]);
+
   return (
     <main className="page-view ghosts-command-page">
       <div className="page-title"><div><span className="eyebrow">AUTOMATION COMMAND CENTER</span><h1>Your triggers</h1><p>See what is closest to acting, why each trigger is waiting, and exactly how much virtual capital it controls.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
@@ -974,7 +996,7 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
         const action = `${ghost.side} ${ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% SOL`}`;
         const evidence = ghost.status === "FILLED" ? "Receipt stored" : ["CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "Outcome stored" : expiryDistance(ghost.expiresAt);
         return <article className={`ghost-command-row answer-${summary.tone}`} key={ghost.id}>
-          <div className="ghost-command-identity"><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><div><div><a href={`/ghost/${ghost.id}`}>{ghost.name}</a><StatusBadge status={ghost.status} /></div><small>{ghost.side} · ONE SHOT · SOL/USDC</small></div></div>
+          <div className="ghost-command-identity"><span className="mini-ghost"><BrandIcon size={17} weight="duotone" /></span><div><div><a href={`/ghost/${ghost.id}`}>{ghost.name}</a><StatusBadge status={ghost.status} /></div><small>{ghost.side} · {ghost.evaluations.length} SIGNAL{ghost.evaluations.length === 1 ? "" : "S"} · SOL/USDC</small></div></div>
           <div className="ghost-command-answer"><span>{summary.label}</span><b>{summary.headline}</b><p>{summary.reason}</p></div>
           <GhostSignalTrace evaluations={ghost.evaluations} />
           <div className="ghost-command-intent"><span>ACTION IF READY</span><b>{action}</b><small>{ghost.reservation ? `${quantity.format(Number(ghost.reservation.amount))} ${ghost.reservation.asset} set aside` : "capital starts when armed"}</small></div>
@@ -1181,6 +1203,7 @@ function DetailView({ workspace, ghostId }: { workspace: Workspace; ghostId: str
     },
   });
   if (query.isLoading) return <LoadingView />;
+  if (query.isError) return <main className="page-view"><div className="empty-state detail-unavailable" role="alert"><Warning size={36} /><h2>Trigger details are unavailable</h2><p>{query.error instanceof Error ? query.error.message : "The stored trigger could not be loaded."}</p><div><button onClick={() => query.refetch()}>TRY AGAIN</button><a href="/ghosts">BACK TO TRIGGERS</a></div></div></main>;
   if (!query.data) return <main className="page-view"><div className="empty-state"><Warning size={36} /><h2>Trigger not found</h2><a href="/ghosts">BACK TO TRIGGERS</a></div></main>;
   return <GhostDetailContent workspace={workspace} ghost={query.data} advanceFrame={() => advance.mutate()} advancingFrame={advance.isPending} />;
 }
@@ -1202,9 +1225,10 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
   } : ghost.evaluationFrame ?? workspace.frame;
   const dataPaused = ghost.status === "PAUSED" && ["DATA_STALE", "FRAME_INCOMPLETE"].includes(ghost.pauseReason ?? "");
   const framePredatesArm = ghost.status === "WATCHING" && Boolean(ghost.armedAt) && new Date(frame.assembledAt).getTime() < new Date(ghost.armedAt!).getTime();
-  const normalizedStatus = ghost.status === "ARMED" || ghost.status === "PAUSED" ? "WATCHING" : ghost.status;
-  const storedStage = detailLifecycle.indexOf(normalizedStatus as (typeof detailLifecycle)[number]);
-  const actualStage = storedStage >= 0 ? storedStage : ghost.armedAt ? 1 : 0;
+  const activityTypes = new Set(ghost.activities?.map((activity) => activity.type) ?? []);
+  const reachedTriggered = activityTypes.has("TRIGGERED") || activityTypes.has("EXECUTION_STARTED") || Boolean(ghost.execution);
+  const reachedExecuting = activityTypes.has("EXECUTION_STARTED") || Boolean(ghost.execution);
+  const actualStage = ghost.status === "FILLED" ? 4 : reachedExecuting ? 3 : reachedTriggered ? 2 : ghost.armedAt ? 1 : 0;
   const [inspectionStage, setInspectionStage] = useState(actualStage);
   useEffect(() => setInspectionStage(actualStage), [actualStage]);
   const unsatisfied = ghost.evaluations.filter((evaluation) => !evaluation.satisfied);
@@ -1249,6 +1273,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
           </dl>
         </aside>
         <div className="detail-scene-stage">
+          {viewingHistory && <div className="history-inspection-notice" role="status"><ClockCounterClockwise size={15} /><span><b>HISTORICAL INSPECTION</b>Viewing reached state {inspectedStatus}. The current stored state remains {ghost.status}.</span></div>}
           <GhostCoreScene conditions={sceneConditions} blocked={dataPaused || ghost.status === "FAILED"} lifecycleStage={inspectionStage} status={viewingHistory ? inspectedStatus : ghost.status} />
           <div className="scene-state"><span>{viewingHistory ? "VIEWING REACHED STATE" : dataPaused ? "SAFETY PAUSE" : "CURRENT STATE"}</span><b>{viewingHistory ? inspectedStatus : ghost.status}</b></div>
           <div className="scene-frame"><Database size={15} /><span>FRAME {frame.id.slice(0, 8)}</span><b>{frame.completeness}</b></div>
@@ -1422,7 +1447,7 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
     <AppShell>
       <header className="app-header">
         <Logo />
-        <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers<span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length || ""}</span></a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
+        <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers{workspace.ghosts.some((ghost) => ghost.status === "WATCHING") && <span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length}</span>}</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
         <div className="header-tools">
           <button ref={environmentButtonRef} className="environment-button" aria-label="Open paper trading settings" aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><i /><span>PAPER TRADING</span><CaretRight size={14} /></button>
           <button ref={accountButtonRef} className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>

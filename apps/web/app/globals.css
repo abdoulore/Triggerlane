@@ -1825,6 +1825,12 @@ body { font-size: 14px; }
 .phase-26-detail .observatory-facts .primary-fact { padding-block: 15px; border-top-color: var(--line-strong); }
 .phase-26-detail .observatory-facts .primary-fact dd { color: var(--accent); font-size: 16px; }
 .detail-state-blocked .observatory-facts .primary-fact dd { color: var(--amber); }
+.history-inspection-notice { position: absolute; z-index: 4; top: 16px; left: 16px; right: 16px; min-height: 44px; display: flex; align-items: center; gap: 9px; padding: 9px 12px; color: var(--amber); background: rgba(24,20,12,.94); border: 1px solid rgba(226,174,74,.34); }
+.history-inspection-notice span { color: var(--muted-2); font-size: 11px; line-height: 1.45; }
+.history-inspection-notice b { display: block; margin-bottom: 2px; color: var(--amber); font: 9px var(--font-geist-mono); }
+.detail-unavailable > div { display: flex; justify-content: center; gap: 8px; margin-top: 18px; }
+.detail-unavailable button, .detail-unavailable a { min-height: 42px; display: inline-flex; align-items: center; padding: 0 15px; color: var(--text); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius); font: 10px var(--font-geist-mono); cursor: pointer; }
+.detail-unavailable button { color: #06100d; background: var(--accent); border-color: var(--accent); }
 .detail-evidence-summary { min-height: 104px; display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line-strong); }
 .detail-evidence-summary > div { min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 17px 20px; border-right: 1px solid var(--line); }
 .detail-evidence-summary > div:last-child { border-right: 0; }
@@ -1861,6 +1867,7 @@ body { font-size: 14px; }
   .phase-26-detail .detail-observatory { display: flex; flex-direction: column; min-height: 0; }
   .phase-26-detail .observatory-brief { order: 1; gap: 28px; padding: 30px 16px 26px; border-right: 0; border-top: 0; border-bottom: 1px solid var(--line-strong); }
   .phase-26-detail .detail-scene-stage { order: 2; min-height: 430px; }
+  .history-inspection-notice { top: 10px; left: 10px; right: 10px; }
   .phase-26-detail .ghost-core-visual, .phase-26-detail .ghost-core-scene, .phase-26-detail .ghost-core-fallback { min-height: 430px; }
   .detail-current-answer h2 { font-size: 30px; }
   .detail-current-answer p { font-size: 15px; }
