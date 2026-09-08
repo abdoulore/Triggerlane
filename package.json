@@ -14,6 +14,10 @@
     "test:e2e": "playwright test",
     "test:launch": "playwright test e2e/launch-hardening.spec.ts",
     "check:budget": "node scripts/check-build-budget.mjs",
+    "data:backup": "node scripts/pglite-volume.mjs backup",
+    "data:restore": "node scripts/pglite-volume.mjs restore",
+    "test:operations": "node scripts/pglite-volume.test.mjs",
+    "test:load": "tsx scripts/operations-load.mts",
     "check:launch": "npm run test && npm run typecheck && npm run build && npm run check:budget && npm run test:e2e",
     "typecheck": "npm run typecheck -w @ghost/domain && npm run typecheck -w @ghost/api && npm run typecheck -w @ghost/web"
   },

@@ -401,6 +401,60 @@ export class GhostService {
     return (await this.workspace(userId)).ghosts;
   }
 
+  async ghostPage(userId: string, query: unknown = {}) {
+    const request = z.object({ limit: z.coerce.number().int().min(1).max(100).default(40), cursor: z.string().optional(), status: z.string().max(32).optional(), search: z.string().trim().max(80).optional() }).parse(query);
+    const cursor = request.cursor ? this.decodeCursor(request.cursor, "TRIGGER") : null;
+    const search = request.search ? `%${request.search}%` : null;
+    const [items, total] = await Promise.all([
+      rows<GhostRow>(this.database, `SELECT * FROM ghosts WHERE user_id=$1 AND ($2::text IS NULL OR status=$2) AND ($3::text IS NULL OR name ILIKE $3) AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5::text)) ORDER BY created_at DESC,id DESC LIMIT $6`, [userId, request.status ?? null, search, cursor?.at ?? null, cursor?.id ?? null, request.limit + 1]),
+      one<{ count: string }>(this.database, "SELECT COUNT(*)::text AS count FROM ghosts WHERE user_id=$1 AND ($2::text IS NULL OR status=$2) AND ($3::text IS NULL OR name ILIKE $3)", [userId, request.status ?? null, search]),
+    ]);
+    return this.page(items, request.limit, total?.count ?? "0", (item) => publicGhost(item), (item) => ({ at: new Date(item.created_at).toISOString(), id: item.id }));
+  }
+
+  async historyPage(userId: string, query: unknown = {}) {
+    const request = z.object({ limit: z.coerce.number().int().min(1).max(100).default(40), cursor: z.string().optional(), status: z.enum(["FILLED", "CANCELLED", "EXPIRED", "FAILED"]).optional() }).parse(query);
+    const cursor = request.cursor ? this.decodeCursor(request.cursor, "HISTORY") : null;
+    const terminal = request.status ? [request.status] : ["FILLED", "CANCELLED", "EXPIRED", "FAILED"];
+    const [items, total, aggregates] = await Promise.all([
+      rows<GhostRow>(this.database, "SELECT * FROM ghosts WHERE user_id=$1 AND status=ANY($2::text[]) AND ($3::timestamptz IS NULL OR (updated_at,id)<($3::timestamptz,$4::text)) ORDER BY updated_at DESC,id DESC LIMIT $5", [userId, terminal, cursor?.at ?? null, cursor?.id ?? null, request.limit + 1]),
+      one<{ count: string }>(this.database, "SELECT COUNT(*)::text AS count FROM ghosts WHERE user_id=$1 AND status=ANY($2::text[])", [userId, terminal]),
+      rows<{ status: string; count: string }>(this.database, "SELECT status,COUNT(*)::text AS count FROM ghosts WHERE user_id=$1 AND status=ANY($2::text[]) GROUP BY status", [userId, ["FILLED", "CANCELLED", "EXPIRED", "FAILED"]]),
+    ]);
+    return { ...this.page(items, request.limit, total?.count ?? "0", (item) => publicGhost(item), (item) => ({ at: new Date(item.updated_at).toISOString(), id: item.id })), counts: Object.fromEntries(aggregates.map((item) => [item.status, Number(item.count)])) };
+  }
+
+  async ledgerPage(userId: string, query: unknown = {}) {
+    const request = z.object({ limit: z.coerce.number().int().min(1).max(100).default(40), cursor: z.string().optional() }).parse(query);
+    const cursor = request.cursor ? this.decodeCursor(request.cursor, "LEDGER") : null;
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const [transactions, total] = await Promise.all([
+      rows<Record<string, unknown>>(this.database, "SELECT id,type,execution_id,created_at FROM ledger_transactions WHERE portfolio_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::text)) ORDER BY created_at DESC,id DESC LIMIT $4", [portfolio.id, cursor?.at ?? null, cursor?.id ?? null, request.limit + 1]),
+      one<{ count: string }>(this.database, "SELECT COUNT(*)::text AS count FROM ledger_transactions WHERE portfolio_id=$1", [portfolio.id]),
+    ]);
+    const selected = transactions.slice(0, request.limit);
+    const ids = selected.map((item) => item.id as string);
+    const entries = ids.length ? await rows<Record<string, unknown>>(this.database, "SELECT * FROM ledger_entries WHERE transaction_id=ANY($1::text[]) ORDER BY created_at,asset", [ids]) : [];
+    return this.page(transactions, request.limit, total?.count ?? "0", (item) => ({ ...item, createdAt: new Date(item.created_at as string).toISOString(), entries: entries.filter((entry) => entry.transaction_id === item.id) }), (item) => ({ at: new Date(item.created_at as string).toISOString(), id: item.id as string }));
+  }
+
+  private decodeCursor(value: string, label: string) {
+    try {
+      const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { at?: string; id?: string };
+      if (!decoded.at || !decoded.id || Number.isNaN(Date.parse(decoded.at))) throw new Error("invalid");
+      return { at: decoded.at, id: decoded.id };
+    } catch {
+      throw new AppError(`INVALID_${label}_CURSOR`, `The ${label.toLowerCase()} cursor is invalid.`, 422);
+    }
+  }
+
+  private page<T, U>(all: T[], limit: number, total: string, map: (item: T) => U, cursor: (item: T) => { at: string; id: string }) {
+    const hasMore = all.length > limit;
+    const selected = all.slice(0, limit);
+    const last = selected.at(-1);
+    return { items: selected.map(map), total: Number(total), nextCursor: hasMore && last ? Buffer.from(JSON.stringify(cursor(last)), "utf8").toString("base64url") : null };
+  }
+
   async ghostActivity(userId: string, ghostId: string, query: unknown = {}) {
     const request = z.object({ limit: z.coerce.number().int().min(1).max(100).default(40), cursor: z.string().optional() }).parse(query);
     const owned = await one<{ id: string }>(this.database, "SELECT id FROM ghosts WHERE id=$1 AND user_id=$2", [ghostId, userId]);
@@ -852,7 +906,7 @@ export class GhostService {
     );
     const ghostRows = await rows<GhostRow>(
       this.database,
-      "SELECT * FROM ghosts WHERE user_id = $1 ORDER BY created_at DESC",
+      "SELECT * FROM ghosts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100",
       [userId],
     );
     const activityRows = await rows<Record<string, unknown>>(
@@ -862,7 +916,7 @@ export class GhostService {
     );
     const executionRows = await rows<Record<string, unknown>>(
       this.database,
-      "SELECT e.*, g.name AS ghost_name FROM executions e JOIN ghosts g ON g.id = e.ghost_id WHERE e.portfolio_id = $1 ORDER BY e.completed_at DESC",
+      "SELECT e.*, g.name AS ghost_name FROM executions e JOIN ghosts g ON g.id = e.ghost_id WHERE e.portfolio_id = $1 ORDER BY e.completed_at DESC LIMIT 100",
       [portfolio.id],
     );
     const archivedExecutionRows = await rows<Record<string, unknown>>(
@@ -872,7 +926,7 @@ export class GhostService {
        JOIN ghosts g ON g.id = e.ghost_id
        JOIN portfolios p ON p.id = e.portfolio_id
        WHERE p.user_id = $1 AND p.status = 'ARCHIVED'
-       ORDER BY e.completed_at DESC`,
+       ORDER BY e.completed_at DESC LIMIT 100`,
       [userId],
     );
     const attemptRows = await rows<Record<string, unknown>>(
@@ -887,7 +941,7 @@ export class GhostService {
        JOIN evaluation_frames f ON f.id = ea.trigger_frame_id
        LEFT JOIN capital_reservations r ON r.id = g.reservation_id
        WHERE g.portfolio_id = $1 AND ea.status = 'BLOCKED'
-       ORDER BY ea.updated_at DESC`,
+       ORDER BY ea.updated_at DESC LIMIT 100`,
       [portfolio.id],
     );
     const blockedActivityRows = await rows<Record<string, unknown>>(
@@ -895,7 +949,7 @@ export class GhostService {
       `SELECT id, ghost_id, message, metadata, created_at
        FROM ghost_activities
        WHERE user_id = $1 AND type = 'EXECUTION_BLOCKED'
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC LIMIT 100`,
       [userId],
     );
     const ledgerTransactionRows = await rows<Record<string, unknown>>(
@@ -905,7 +959,7 @@ export class GhostService {
        LEFT JOIN executions e ON e.id = lt.execution_id
        LEFT JOIN ghosts g ON g.id = e.ghost_id
        WHERE lt.portfolio_id = $1
-       ORDER BY lt.created_at DESC`,
+       ORDER BY lt.created_at DESC LIMIT 100`,
       [portfolio.id],
     );
     const ledgerEntryRows = await rows<Record<string, unknown>>(
@@ -913,7 +967,7 @@ export class GhostService {
       `SELECT id, transaction_id, asset, amount_decimal::text, cost_basis_delta_usdc_decimal::text,
         unit_price_usdc_decimal::text, type, created_at
        FROM ledger_entries
-       WHERE portfolio_id = $1
+       WHERE transaction_id IN (SELECT id FROM ledger_transactions WHERE portfolio_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100)
        ORDER BY created_at DESC, asset`,
       [portfolio.id],
     );
@@ -924,7 +978,7 @@ export class GhostService {
        FROM capital_reservations r
        JOIN ghosts g ON g.id = r.ghost_id
        WHERE r.portfolio_id = $1
-       ORDER BY r.updated_at DESC`,
+       ORDER BY r.updated_at DESC LIMIT 100`,
       [portfolio.id],
     );
 

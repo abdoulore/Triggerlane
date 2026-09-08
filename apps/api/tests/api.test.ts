@@ -161,6 +161,14 @@ describe("Ghost API", () => {
     expect(diagnostics.json()).toMatchObject({ ok: true, executionAttemptsInFlight: 0 });
   });
 
+  it("reports retention candidates without enabling deletion", async () => {
+    const retention = await app.inject({ method: "GET", url: "/health/retention" });
+    expect(retention.statusCode).toBe(200);
+    expect(retention.json()).toMatchObject({ dryRun: true, deletionEnabled: false, retentionDays: 90 });
+    expect(retention.headers["x-content-type-options"]).toBe("nosniff");
+    expect(retention.headers["x-frame-options"]).toBe("DENY");
+  });
+
   it("automatically pauses stale frames and recovers only on a complete frame", async () => {
     const created = await app.inject({
       method: "POST",
@@ -824,6 +832,25 @@ describe("Ghost API", () => {
     expect(second.nextCursor).toBeTruthy();
   });
 
+  it("paginates triggers, outcomes, and ledger with independent totals", async () => {
+    const triggers = (await app.inject({ method: "GET", url: "/api/ghost-pages?limit=2", headers: { cookie } })).json();
+    expect(triggers.items).toHaveLength(2);
+    expect(triggers.total).toBeGreaterThanOrEqual(triggers.items.length);
+    expect(triggers.nextCursor).toBeTruthy();
+    const next = (await app.inject({ method: "GET", url: `/api/ghost-pages?limit=2&cursor=${encodeURIComponent(triggers.nextCursor)}`, headers: { cookie } })).json();
+    expect(next.items.some((item: { id: string }) => triggers.items.some((first: { id: string }) => first.id === item.id))).toBe(false);
+
+    const history = (await app.inject({ method: "GET", url: "/api/history-pages?limit=1", headers: { cookie } })).json();
+    expect(history.items).toHaveLength(1);
+    expect(history.total).toBeGreaterThanOrEqual(1);
+    expect(history.counts).toBeTypeOf("object");
+
+    const ledger = (await app.inject({ method: "GET", url: "/api/ledger-pages?limit=1", headers: { cookie } })).json();
+    expect(ledger.items).toHaveLength(1);
+    expect(ledger.total).toBeGreaterThanOrEqual(1);
+    expect(ledger.items[0].entries.length).toBeGreaterThan(0);
+  });
+
   it("resets a portfolio idempotently into a new seeded generation", async () => {
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
@@ -845,5 +872,23 @@ describe("Ghost API", () => {
     expect(analytics.rows.map((row) => row.event_name)).toEqual(expect.arrayContaining(["sandbox_started", "ghost_armed", "replay_completed", "ghost_ai_used", "strategy_used"]));
     const outbox = await database.query<{ event_type: string }>("SELECT DISTINCT event_type FROM outbox_events WHERE user_id=$1", [workspace.identity.id]);
     expect(outbox.rows.map((row) => row.event_type)).toEqual(expect.arrayContaining(["ghost.status.updated", "ghost.execution.completed", "market.connection.updated", "replay.completed", "strategy.updated"]));
+  });
+
+  it("returns explicit 429 responses for account creation and trigger quotas", async () => {
+    const limitedApp = await buildServer(database, { anonymousSessionsPerIpPerHour: 1, triggersPerAccount: 1 });
+    const session = await limitedApp.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const secondSession = await limitedApp.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    expect(secondSession.statusCode).toBe(429);
+    expect(secondSession.headers["retry-after"]).toBeTruthy();
+    expect(secondSession.json().error.code).toBe("SESSION_CREATION_LIMITED");
+
+    const draft = { name: "Only trigger", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "200" }] };
+    expect((await limitedApp.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: draft })).statusCode).toBe(201);
+    const overQuota = await limitedApp.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: { ...draft, name: "One too many" } });
+    expect(overQuota.statusCode).toBe(429);
+    expect(overQuota.json().error.code).toBe("TRIGGER_QUOTA_REACHED");
+    await limitedApp.close();
   });
 });

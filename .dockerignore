@@ -10,3 +10,11 @@ playwright-report
 *.log
 *.tsbuildinfo
 docs/archive
+docs
+*.md
+.env
+.env.*
+!.env.example
+*.bak
+*.tmp
+attachments

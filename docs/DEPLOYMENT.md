@@ -32,6 +32,8 @@ PGLITE_DATA_DIR=/data/triggerlane
 API_HOST=127.0.0.1
 API_PORT=8787
 API_INTERNAL_URL=http://127.0.0.1:8787
+TRUST_PROXY_HOPS=1
+OPERATIONS_TOKEN=<a separate cryptographically random value of at least 32 characters>
 ```
 
 Railway provides `PORT` for the public Next.js server. Do not set `NEXT_PUBLIC_API_URL` in production; an unset value makes the browser use same-origin `/api` requests. Set `WEB_ORIGIN` to the final `https://` public domain after Railway generates it.
@@ -43,6 +45,18 @@ Generate `SESSION_SECRET` locally with a password manager or a cryptographically
 Only files below `/data` survive redeploys. The configured database path is `/data/triggerlane`. Confirm the volume is mounted before inviting users, then enable Railway volume backups appropriate to the deployment tier.
 
 Keep the service at one replica while it uses PGlite. Moving to multiple replicas requires migrating persistence to a managed PostgreSQL database and separating the worker lifecycle.
+
+Detailed diagnostics, integrity checks, and the retention report require `Authorization: Bearer <OPERATIONS_TOKEN>` in production. `/health` and `/health/ready` remain public and contain no account data.
+
+For an offline filesystem backup, stop the service so PGlite has no writer, then run `npm run data:backup -- /data/triggerlane /backup/triggerlane-YYYYMMDD`. Restore only into a new empty path with `npm run data:restore -- /backup/triggerlane-YYYYMMDD /data/triggerlane-restored`; point a separate verification instance at that restored path before any replacement. Both commands refuse to overwrite an existing destination and write a SHA-256 manifest. Railway volume snapshots remain the preferred hosted backup mechanism.
+
+`GET /health/retention` is report-only. It identifies anonymous accounts beyond the configured retention window but cannot delete them. Enabling deletion requires a separately reviewed policy and explicit approval.
+
+## Starting Resource Limits
+
+The committed defaults are 300 API requests per IP per minute, 90 mutations per session per minute, 60 new anonymous accounts per IP per hour, four live-event streams per session, 100 streams process-wide, and 100 stored triggers per account. These are protective solo-demo ceilings, not capacity claims. `npm run test:load` verifies controlled `429` behavior under 340 concurrent in-process requests and a mutation burst. Re-run and tune against production telemetry before materially increasing traffic or replicas.
+
+Paginated collection APIs are available at `/api/ghost-pages`, `/api/history-pages`, `/api/ledger-pages`, and `/api/ghosts/:id/activity`. They accept bounded `limit` and opaque `cursor` values and return independent totals; the legacy workspace response is capped at 100 records per major collection for current UI compatibility.
 
 ## First Deployment Check
 

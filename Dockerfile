@@ -21,7 +21,9 @@ ENV NODE_ENV=production \
     API_INTERNAL_URL=http://127.0.0.1:8787 \
     PGLITE_DATA_DIR=/data/triggerlane
 
-RUN mkdir -p /data/triggerlane
+RUN mkdir -p /data/triggerlane && chown -R node:node /data
+
+USER node
 
 EXPOSE 3000
 

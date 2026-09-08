@@ -48,6 +48,7 @@ export function runtimeConfig() {
       sseConnectionsPerSession: positiveInteger("SSE_CONNECTIONS_PER_SESSION", 4),
       sseConnectionsTotal: positiveInteger("SSE_CONNECTIONS_TOTAL", 100),
       triggersPerAccount: positiveInteger("TRIGGERS_PER_ACCOUNT", 100),
+      anonymousRetentionDays: positiveInteger("ANONYMOUS_RETENTION_DAYS", 90),
     },
   };
 }

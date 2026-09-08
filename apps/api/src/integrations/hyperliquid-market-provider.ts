@@ -65,6 +65,7 @@ export class HyperliquidMarketProvider {
     private readonly clock: () => number = Date.now,
     private readonly cacheTtlMs = 5_000,
     private readonly failureBackoffMs = 5_000,
+    private readonly maxConcurrentViews = 3,
   ) {}
 
   async view(interval: LiveHistoryInterval = "5m"): Promise<MarketView> {
@@ -73,6 +74,7 @@ export class HyperliquidMarketProvider {
     if (current && timestamp - current.fetchedAt <= this.cacheTtlMs) return current.value;
     const pending = this.inFlight.get(interval);
     if (pending) return pending;
+    if (this.inFlight.size >= this.maxConcurrentViews) return current ? this.asStale(current.value, "Provider request capacity is busy.") : unavailable(interval, "Provider request capacity is busy.");
     if (timestamp < this.retryAfter) return current ? this.asStale(current.value, "Provider retry is backing off.") : unavailable(interval, "Provider retry is backing off.");
 
     const load = this.fetchView(interval).catch((error: unknown) => {

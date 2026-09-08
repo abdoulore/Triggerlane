@@ -18,7 +18,7 @@ declare module "fastify" {
   }
 }
 
-export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
+export async function buildServer(database?: PGlite, limitOverrides: Partial<ReturnType<typeof runtimeConfig>["limits"]> = {}): Promise<FastifyInstance> {
   if (process.env.NODE_ENV === "production" && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
     throw new Error("SESSION_SECRET must contain at least 32 characters in production.");
   }
@@ -27,16 +27,20 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     throw new Error("TRUST_PROXY_HOPS must be 0, 1, or 2.");
   }
   const trustProxy = trustedProxyHops > 0 ? (_address: string, hop: number) => hop < trustedProxyHops : false;
-  const app = Fastify({ logger: process.env.NODE_ENV !== "test", trustProxy });
+  const logger = process.env.NODE_ENV === "test" ? false : { redact: { paths: ["req.headers.cookie", "req.headers.authorization", "req.headers['idempotency-key']", "res.headers['set-cookie']"], censor: "[REDACTED]" } };
+  const app = Fastify({ logger, trustProxy });
   const db = database ?? (await getDatabase());
   const service = new GhostService(db);
-  const config = runtimeConfig();
+  const baseConfig = runtimeConfig();
+  const config = { ...baseConfig, limits: { ...baseConfig.limits, ...limitOverrides } };
   const events = new EventEmitter();
   const workerId = randomUUID();
   const startedAt = Date.now();
   let requestCount = 0;
   let errorCount = 0;
   let totalResponseMs = 0;
+  let workerErrorCount = 0;
+  let lastWorkerErrorAt: string | null = null;
   const rateWindows = new Map<string, { count: number; resetsAt: number }>();
   const sseBySession = new Map<string, number>();
   let sseTotal = 0;
@@ -50,6 +54,21 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     origin: process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
     credentials: true,
   });
+
+  app.addHook("onRequest", async (_request, reply) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "strict-origin-when-cross-origin");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production") reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+  });
+
+  async function requireOperationsAccess(request: FastifyRequest): Promise<void> {
+    if (process.env.NODE_ENV !== "production") return;
+    const expected = process.env.OPERATIONS_TOKEN;
+    if (!expected || expected.length < 32) throw new AppError("OPERATIONS_NOT_CONFIGURED", "Operational diagnostics are unavailable.", 404);
+    if (request.headers.authorization !== `Bearer ${expected}`) throw new AppError("OPERATIONS_UNAUTHORIZED", "Operational diagnostics require authorization.", 401);
+  }
 
   function consumeLimit(key: string, maximum: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
     const timestamp = Date.now();
@@ -122,7 +141,11 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     }
   };
   if (process.env.NODE_ENV !== "test") await backgroundTick();
-  const workerTimer = process.env.NODE_ENV === "test" ? null : setInterval(() => void backgroundTick().catch((error) => app.log.error(error)), 1_000);
+  const workerTimer = process.env.NODE_ENV === "test" ? null : setInterval(() => void backgroundTick().catch((error) => {
+    workerErrorCount += 1;
+    lastWorkerErrorAt = new Date().toISOString();
+    app.log.error({ err: error, workerErrorCount }, "maintenance worker tick failed");
+  }), 1_000);
   workerTimer?.unref();
   app.addHook("onClose", async () => {
     if (workerTimer) clearInterval(workerTimer);
@@ -151,7 +174,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
       return reply.status(503).send({ ok: false, service: "ghost-api", database: "unavailable" });
     }
   });
-  app.get("/health/diagnostics", async () => {
+  app.get("/health/diagnostics", { preHandler: requireOperationsAccess }, async () => {
     const [outbox, attempts, lease] = await Promise.all([
       db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM outbox_events WHERE published_at IS NULL"),
       db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM execution_attempts WHERE status IN ('LOCKED', 'SETTLING')"),
@@ -165,10 +188,30 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
       averageResponseMs: requestCount === 0 ? 0 : Number((totalResponseMs / requestCount).toFixed(2)),
       outboxPending: Number(outbox.rows[0]?.count ?? 0),
       executionAttemptsInFlight: Number(attempts.rows[0]?.count ?? 0),
+      workerErrors: workerErrorCount,
+      lastWorkerErrorAt,
       workerLease: lease.rows[0] ? { active: new Date(lease.rows[0].expires_at).getTime() > Date.now(), owner: lease.rows[0].owner_id.slice(0, 8) } : { active: false, owner: null },
     };
   });
-  app.get("/health/integrity", async () => service.integrityReport());
+  app.get("/health/integrity", { preHandler: requireOperationsAccess }, async () => service.integrityReport());
+  app.get("/health/retention", { preHandler: requireOperationsAccess }, async () => {
+    const cutoff = new Date(Date.now() - config.limits.anonymousRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const candidateRows = await db.query<{ id: string }>(
+      `SELECT user_id AS id FROM sessions
+       GROUP BY user_id
+       HAVING MAX(expires_at) <= NOW() AND MAX(last_seen_at) < $1
+       ORDER BY MAX(last_seen_at) LIMIT 1000`,
+      [cutoff],
+    );
+    const ids = candidateRows.rows.map((row) => row.id);
+    const empty = { rows: [{ count: "0" }] };
+    const [sessions, portfolios, ghosts] = ids.length ? await Promise.all([
+      db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM sessions WHERE user_id=ANY($1::text[])", [ids]),
+      db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM portfolios WHERE user_id=ANY($1::text[])", [ids]),
+      db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM ghosts WHERE user_id=ANY($1::text[])", [ids]),
+    ]) : [empty, empty, empty];
+    return { dryRun: true, deletionEnabled: false, capped: ids.length === 1000, retentionDays: config.limits.anonymousRetentionDays, cutoff, candidates: { users: String(ids.length), sessions: sessions.rows[0]?.count ?? "0", portfolios: portfolios.rows[0]?.count ?? "0", ghosts: ghosts.rows[0]?.count ?? "0" } };
+  });
 
   app.post("/api/session/anonymous", async (request, reply) => {
     const currentToken = readSessionToken(request);
@@ -213,6 +256,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     return workspace;
   });
   app.get("/api/ghosts", { preHandler: requireSession }, async (request) => service.ghosts(request.userId!));
+  app.get("/api/ghost-pages", { preHandler: requireSession }, async (request) => service.ghostPage(request.userId!, request.query));
   app.get("/api/ghosts/:id", { preHandler: requireSession }, async (request) => {
     const { id } = request.params as { id: string };
     return service.ghost(request.userId!, id);
@@ -224,6 +268,8 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   });
   app.get("/api/ghosts/:id/activity", { preHandler: requireSession }, async (request) => service.ghostActivity(request.userId!, (request.params as { id: string }).id, request.query));
   app.get("/api/history", { preHandler: requireSession }, async (request) => service.history(request.userId!));
+  app.get("/api/history-pages", { preHandler: requireSession }, async (request) => service.historyPage(request.userId!, request.query));
+  app.get("/api/ledger-pages", { preHandler: requireSession }, async (request) => service.ledgerPage(request.userId!, request.query));
   app.get("/api/executions/:id", { preHandler: requireSession }, async (request) => service.execution(request.userId!, (request.params as { id: string }).id));
 
   app.post("/api/ghosts", { preHandler: requireSession }, async (request, reply) => {
