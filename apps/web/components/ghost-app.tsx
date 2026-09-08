@@ -38,11 +38,14 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { evaluateCondition, formatMetric, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { API_URL, ApiError, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
+import { GhostActions } from "./ghost-actions";
+import { LoadingView } from "./loading-view";
 import { MarketChart } from "./market-chart";
+import { OnboardingPanel, type ProductView } from "./onboarding-panel";
 import { AppShell, SandboxDisclaimer } from "./shells";
 import { MetricValue, StatusBadge } from "./ui-foundation";
 
-type AppView = "trade" | "ghosts" | "portfolio" | "history" | "discover" | "detail";
+type AppView = ProductView;
 
 interface RuntimeCapabilities {
   environment: "development" | "preview" | "production-sandbox" | "production-rialo";
@@ -249,15 +252,6 @@ interface StrategyCatalog {
   capabilities: { market: string; metrics: Metric[]; unsupportedAdvancedMetrics: string[] };
   strategies: Strategy[];
 }
-
-const onboardingByView: Record<AppView, { title: string; intro: string; steps: [string, string, string] }> = {
-  trade: { title: "Build one clear trigger", intro: "Choose the market moment first. Triggerlane will keep watching until every condition you add is true together.", steps: ["Choose one signal or combine several", "Review the capital commitment", "Save, then start monitoring"] },
-  ghosts: { title: "Read triggers by attention", intro: "The closest trigger is the one whose current signals are nearest to agreeing.", steps: ["Check the plain-language state", "Compare current values with targets", "Pause, resume, or inspect safely"] },
-  detail: { title: "Start with the answer", intro: "The current answer explains why this trigger is waiting, blocked, or complete before showing technical evidence.", steps: ["Read the current state", "See which signal still disagrees", "Open evidence only when needed"] },
-  portfolio: { title: "Follow every virtual dollar", intro: "Available capital is free to use. Reserved capital belongs to a named active trigger.", steps: ["Reconcile available plus reserved", "Trace each reservation to its owner", "Open ledger evidence for movements"] },
-  history: { title: "Read the outcome first", intro: "Every row begins with what happened to the trigger and its capital, then keeps the stored proof behind it.", steps: ["Identify the outcome", "Confirm the capital result", "Expand the receipt or attempt"] },
-  discover: { title: "Learn before you build", intro: "Strategies here are teaching examples. Replay explores demo history; Composer lets you edit the idea yourself.", steps: ["Understand why the signals belong together", "Replay without changing your account", "Load an editable draft for review"] },
-};
 
 interface AiComposeResponse extends AiComposeResult {
   parser: { mode: "DETERMINISTIC"; modelProvider: null; supportedMarket: string; supportedMetrics: Metric[] };
@@ -855,32 +849,6 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
   );
 }
 
-function GhostActions({ ghost, context = "row" }: { ghost: GhostRecord; context?: "row" | "detail" }) {
-  const queryClient = useQueryClient();
-  const mutate = useMutation({
-    mutationFn: (action: "pause" | "resume" | "cancel" | "arm") => api(`/api/ghosts/${ghost.id}/${action}`, { method: "POST" }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["workspace"] });
-      void queryClient.invalidateQueries({ queryKey: ["ghost", ghost.id] });
-      void queryClient.invalidateQueries({ queryKey: ["ghost-activity", ghost.id] });
-    },
-  });
-  const terminal = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status);
-  const pending = mutate.isPending;
-  const error = mutate.error instanceof Error ? mutate.error.message : null;
-  return (
-    <div className={`ghost-action-wrap ${context === "detail" ? "detail-actions" : ""}`}>
-      <div className="row-actions">
-        <button aria-label="Start trigger" title={ghost.status === "DRAFT" ? "Start Trigger" : `Start unavailable while status is ${ghost.status}`} disabled={ghost.status !== "DRAFT" || pending} onClick={() => mutate.mutate("arm")}><Lightning size={17} />{context === "detail" && <span>START</span>}</button>
-        {ghost.status === "PAUSED" ? <button aria-label="Resume trigger" title="Resume Trigger" disabled={pending} onClick={() => mutate.mutate("resume")}><Play size={17} />{context === "detail" && <span>RESUME</span>}</button> : <button aria-label="Pause trigger" title={ghost.status === "WATCHING" ? "Pause Trigger" : `Pause unavailable while status is ${ghost.status}`} disabled={ghost.status !== "WATCHING" || pending} onClick={() => mutate.mutate("pause")}><Pause size={17} />{context === "detail" && <span>PAUSE</span>}</button>}
-        <button aria-label="Cancel trigger" title={terminal ? `Cancel unavailable while status is ${ghost.status}` : "Cancel Trigger"} disabled={terminal || pending} onClick={() => mutate.mutate("cancel")}><X size={17} />{context === "detail" && <span>CANCEL</span>}</button>
-        {context === "row" && <a aria-label={`Open ${ghost.name}`} title="Open Trigger" href={`/ghost/${ghost.id}`}><ArrowRight size={17} /></a>}
-      </div>
-      {error && <small className="row-action-error" role="alert">{error}</small>}
-    </div>
-  );
-}
-
 function GhostSignalTrace({ evaluations }: { evaluations: Evaluation[] }) {
   const ordered = (["PRICE", "FUNDING", "PNL"] as Metric[]).map((metric) => evaluations.find((evaluation) => evaluation.metric === metric)).filter((evaluation): evaluation is Evaluation => Boolean(evaluation));
   const points = ordered.map((evaluation, index) => {
@@ -1296,21 +1264,6 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
       </div>
     </main>
   );
-}
-
-function OnboardingPanel({ view, close }: { view: AppView; close: () => void }) {
-  const guide = onboardingByView[view];
-  return <motion.aside id="onboarding-panel" className="onboarding-panel" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" initial={{ x: 32, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }}>
-    <div className="onboarding-heading"><div><span>NEW HERE?</span><h2 id="onboarding-title">{guide.title}</h2></div><button className="icon-button" title="Close guide" onClick={close}><X size={18} /></button></div>
-    <p>{guide.intro}</p>
-    <ol>{guide.steps.map((step, index) => <li key={step}><i>{index + 1}</i><span>{step}</span></li>)}</ol>
-    <div className="onboarding-boundary"><ShieldCheck size={18} /><span><b>Simulation stays in your control</b><small>Help never creates, starts, stops, or changes a trigger.</small></span></div>
-    {view !== "discover" && <a href="/discover">LEARN WITH A STRATEGY<ArrowRight size={15} /></a>}
-  </motion.aside>;
-}
-
-function LoadingView() {
-  return <div className="loading-shell" role="status" aria-label="Loading Triggerlane workspace" aria-busy="true"><div className="loading-app-header"><i /><span /><span /><span /></div><div className="loading-workspace"><aside><i className="loading-balance" /><i /><i /><i /></aside><main><div className="loading-market"><i /><i /></div><div className="loading-chart" /><div className="loading-conditions"><i /><i /><i /></div></main><aside><i /><i className="loading-textarea" /><i /><i /></aside></div></div>;
 }
 
 export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string }) {
