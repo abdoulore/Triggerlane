@@ -35,7 +35,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { evaluateCondition, formatMetric, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
+import { evaluateCondition, formatMetric, ghostDraftSchema, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { API_URL, ApiError, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
 import { GhostActions } from "./ghost-actions";
@@ -275,7 +275,8 @@ type ComposerState = GhostDraft;
 type ComposerAction =
   | { type: "field"; field: keyof Omit<ComposerState, "conditions">; value: string | number }
   | { type: "condition"; metric: Metric; field: "operator" | "target"; value: string }
-  | { type: "toggle-condition"; metric: Metric }
+  | { type: "add-condition"; condition: GhostDraft["conditions"][number] }
+  | { type: "remove-condition"; metric: Metric }
   | { type: "side"; side: "BUY" | "SELL" }
   | { type: "load"; draft: GhostDraft }
   | { type: "reset" };
@@ -310,13 +311,13 @@ function composerReducer(state: ComposerState, action: ComposerAction): Composer
     };
   }
   if (action.type === "field") return { ...state, [action.field]: action.value } as ComposerState;
-  if (action.type === "toggle-condition") {
-    const active = state.conditions.some((condition) => condition.metric === action.metric);
-    if (active && state.conditions.length === 1) return state;
-    const conditions = active
-      ? state.conditions.filter((condition) => condition.metric !== action.metric)
-      : [...state.conditions, { ...conditionDefaults[action.metric] }].sort((left, right) => conditionOrder.indexOf(left.metric) - conditionOrder.indexOf(right.metric));
-    return { ...state, conditions };
+  if (action.type === "remove-condition") {
+    if (state.conditions.length === 1) return state;
+    return { ...state, conditions: state.conditions.filter((condition) => condition.metric !== action.metric) };
+  }
+  if (action.type === "add-condition") {
+    if (state.conditions.some((condition) => condition.metric === action.condition.metric)) return state;
+    return { ...state, conditions: [...state.conditions, action.condition].sort((left, right) => conditionOrder.indexOf(left.metric) - conditionOrder.indexOf(right.metric)) };
   }
   return {
     ...state,
@@ -458,7 +459,33 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const [composerMode, setComposerMode] = useState<"QUICK" | "AI">("QUICK");
   const [aiApplied, setAiApplied] = useState(false);
   const [compiler, setCompiler] = useState<CompilerPreview | null>(null);
+  const [conditionMenuOpen, setConditionMenuOpen] = useState(false);
+  const [draftStorageReady, setDraftStorageReady] = useState(false);
+  const rememberedConditions = useRef<Record<Metric, GhostDraft["conditions"][number]>>({
+    PRICE: { ...conditionDefaults.PRICE },
+    FUNDING: { ...conditionDefaults.FUNDING },
+    PNL: { ...conditionDefaults.PNL },
+  });
   const strategies = useQuery({ queryKey: ["strategies"], queryFn: () => api<StrategyCatalog>("/api/strategies") });
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem("triggerlane:composer-draft:v1");
+      if (stored) {
+        const parsed = ghostDraftSchema.safeParse(JSON.parse(stored));
+        if (parsed.success) dispatch({ type: "load", draft: parsed.data });
+      }
+    } catch {
+      window.sessionStorage.removeItem("triggerlane:composer-draft:v1");
+    }
+    setDraftStorageReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftStorageReady) return;
+    window.sessionStorage.setItem("triggerlane:composer-draft:v1", JSON.stringify(state));
+    state.conditions.forEach((condition) => { rememberedConditions.current[condition.metric] = { ...condition }; });
+  }, [draftStorageReady, state]);
 
   useEffect(() => {
     if (!strategies.data || loadedStrategy) return;
@@ -546,20 +573,23 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
 
       <div className="condition-builder-heading"><span>ACTIVE CONDITIONS</span><span>{previewEvaluations.filter((item) => item.satisfied).length} of {state.conditions.length} true now</span></div>
       <div className="condition-builder">
-        {conditionOrder.map((metric) => {
-          const active = state.conditions.some((condition) => condition.metric === metric);
-          const condition = state.conditions.find((item) => item.metric === metric) ?? conditionDefaults[metric];
-          const onlyActive = active && state.conditions.length === 1;
-          return <div className={`builder-row ${active ? "active" : "inactive"}`} key={metric}>
-            <label className="builder-toggle" title={onlyActive ? "At least one condition is required" : active ? `Remove ${metricLabels[metric]}` : `Add ${metricLabels[metric]}`}><input type="checkbox" aria-label={`Use ${metricLabels[metric]} condition`} checked={active} disabled={onlyActive} onChange={() => dispatch({ type: "toggle-condition", metric })} /><span><Check size={10} weight="bold" /></span></label>
+        {state.conditions.map((condition) => {
+          const metric = condition.metric;
+          const onlyActive = state.conditions.length === 1;
+          return <div className="builder-row active" key={metric}>
+            <button className="builder-remove" type="button" aria-label={`Remove ${metricLabels[metric]} condition`} title={onlyActive ? "At least one condition is required" : `Remove ${metricLabels[metric]}`} disabled={onlyActive} onClick={() => { rememberedConditions.current[metric] = { ...condition }; dispatch({ type: "remove-condition", metric }); }}><X size={13} /></button>
             <div className="builder-metric"><span>{metricLabels[metric]}</span><small>CURRENT {formatMetric(metric, current[metric].value)}</small></div>
-            <label className="builder-operator"><span>RULE</span><select aria-label={`${metric} operator`} disabled={!active} value={condition.operator} onChange={(event) => dispatch({ type: "condition", metric, field: "operator", value: event.target.value })}>
+            <label className="builder-operator"><span>RULE</span><select aria-label={`${metric} operator`} value={condition.operator} onChange={(event) => { rememberedConditions.current[metric] = { ...condition, operator: event.target.value as "GTE" | "LTE" }; dispatch({ type: "condition", metric, field: "operator", value: event.target.value }); }}>
               <option value="GTE">at least</option><option value="LTE">at most</option>
             </select></label>
-            <label className="builder-target-field"><span>TARGET</span><div className="builder-target"><input aria-label={`${metric} target`} disabled={!active} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => dispatch({ type: "condition", metric, field: "target", value: metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100) })} /><span>{metric === "PRICE" ? "$" : "%"}</span></div></label>
+            <label className="builder-target-field"><span>TARGET</span><div className="builder-target"><input aria-label={`${metric} target`} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => { const target = metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100); rememberedConditions.current[metric] = { ...condition, target }; dispatch({ type: "condition", metric, field: "target", value: target }); }} /><span>{metric === "PRICE" ? "$" : "%"}</span></div></label>
           </div>;
         })}
       </div>
+      {state.conditions.length < conditionOrder.length && <div className="condition-add">
+        <button type="button" aria-expanded={conditionMenuOpen} onClick={() => setConditionMenuOpen((value) => !value)}><Plus size={14} weight="bold" />ADD CONDITION</button>
+        {conditionMenuOpen && <div className="condition-add-menu" role="menu">{conditionOrder.filter((metric) => !state.conditions.some((condition) => condition.metric === metric)).map((metric) => <button type="button" role="menuitem" key={metric} onClick={() => { dispatch({ type: "add-condition", condition: { ...rememberedConditions.current[metric] } }); setConditionMenuOpen(false); }}><span>{metricLabels[metric]}</span><small>{formatMetric(metric, current[metric].value)} now</small></button>)}</div>}
+      </div>}
 
       <div className="constraint-row">
         <label>Max slippage<div className="compact-input"><input type="number" min="1" max="500" value={state.maxSlippageBps} onChange={(event) => dispatch({ type: "field", field: "maxSlippageBps", value: Number(event.target.value) })} /><span>bps</span></div></label>
@@ -572,10 +602,7 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         <dl><div><dt>EST. VALUE</dt><dd>${money.format(commitmentValue)}</dd></div><div><dt>REMAINS AVAILABLE</dt><dd>${money.format(Math.max(0, Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available) * (state.side === "BUY" ? 1 : price) - commitmentValue))}</dd></div></dl>
         <p>{canCommit ? "Reserved only after arming. Released on cancel or expiry." : "Commitment exceeds currently available virtual funds."}</p>
       </section>
-      <section className="action-consequence" aria-label="What happens when this trigger starts">
-        <header><Lightning size={17} weight="duotone" /><span>WHAT HAPPENS WHEN YOU START</span></header>
-        <ol><li><i>1</i><span><b>Reserve virtual capital</b><small>{quantity.format(commitmentAmount)} {commitmentAsset} is set aside before monitoring.</small></span></li><li><i>2</i><span><b>Wait for every active rule</b><small>{state.conditions.length === 1 ? "One selected signal must qualify." : `All ${state.conditions.length} selected signals must qualify in one frame.`}</small></span></li><li><i>3</i><span><b>{actionConsequence} once</b><small>A receipt is stored. Cancel or expiry releases unused capital.</small></span></li></ol>
-      </section>
+      <p className="start-summary" aria-label="What happens when this trigger starts"><Lightning size={16} weight="duotone" /><span>After saving, Start Watching reserves {quantity.format(commitmentAmount)} {commitmentAsset}, waits for {state.conditions.length === 1 ? "this rule" : `all ${state.conditions.length} rules`} in one frame, then {actionConsequence.toLowerCase()} once.</span></p>
       <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Virtual execution ready</span></button>
       {error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{error}</b><small>No capital moved. Your editable Composer values remain in place.</small></div></div>}
 
@@ -829,7 +856,7 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
         </section>
         <section className="watch-zone">
           <div className="watch-heading">
-            <div><span className="eyebrow">WHAT THIS TRIGGER IS WAITING FOR</span><h2>{selected ? selected.name : "Your first trigger"}</h2><p className="waiting-reason"><Pulse size={13} />{waitingReason}</p></div>
+            <div><span className="eyebrow">TRIGGER IN VIEW</span>{workspace.ghosts.length ? <label className="trigger-view-select"><span className="sr-only">Select trigger to inspect</span><select aria-label="Select trigger to inspect" value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{workspace.ghosts.map((ghost) => <option value={ghost.id} key={ghost.id}>{ghost.name} · {ghost.status}</option>)}</select></label> : <h2>Your first trigger</h2>}<p className="waiting-reason"><Pulse size={13} />{waitingReason}</p></div>
             <div className="readiness"><span>{ready} / {conditionCount} READY</span><strong>{Math.round((ready / conditionCount) * 100)}%</strong></div>
           </div>
           <CompactSignalEngine evaluations={evaluations} ghost={selected} />

@@ -362,34 +362,34 @@ test("market context never enters the Composer rail at laptop width", async ({ p
 
 test("Composer supports one signal or an explicit combination", async ({ page }, testInfo) => {
   await page.goto("/trade");
-  const price = page.getByLabel("Use SOL price condition");
-  const funding = page.getByLabel("Use Perp funding condition");
-  const pnl = page.getByLabel("Use Position P&L condition");
-  await expect(price).toBeChecked();
-  await expect(price).toBeDisabled();
-  await expect(funding).not.toBeChecked();
-  await expect(pnl).not.toBeChecked();
-  await expect(page.getByLabel("FUNDING target")).toBeDisabled();
+  const addCondition = page.getByRole("button", { name: "ADD CONDITION" });
+  await expect(page.getByLabel("PRICE target")).toBeVisible();
+  await expect(page.getByLabel("Remove SOL price condition")).toBeDisabled();
+  await expect(page.getByLabel("FUNDING target")).toHaveCount(0);
   await expect(page.getByText(/of 1 true now/)).toBeVisible();
-  await expect(page.getByText("One selected signal must qualify.")).toBeVisible();
   await expect(page.locator(".builder-row").first().getByText(/CURRENT \$/)).toBeVisible();
   await expect(page.locator(".builder-row").first().getByText("TARGET", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("composer-single-signal.png"), fullPage: false });
 
-  await funding.check();
-  await expect(price).toBeEnabled();
-  await expect(page.getByLabel("FUNDING target")).toBeEnabled();
+  await addCondition.click();
+  await page.getByRole("menuitem", { name: /Perp funding/ }).click();
+  await expect(page.getByLabel("Remove SOL price condition")).toBeEnabled();
+  await expect(page.getByLabel("FUNDING target")).toBeVisible();
   await expect(page.getByText(/of 2 true now/)).toBeVisible();
-  await pnl.check();
+  await addCondition.click();
+  await page.getByRole("menuitem", { name: /Position P&L/ }).click();
   await expect(page.getByText(/of 3 true now/)).toBeVisible();
-  await expect(page.getByText("All 3 selected signals must qualify in one frame.")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("composer-three-signals.png"), fullPage: false });
-  await pnl.uncheck();
-  await price.uncheck();
-  await expect(funding).toBeDisabled();
+  await page.getByLabel("Remove Position P&L condition").click();
+  await page.getByLabel("Remove SOL price condition").click();
+  await expect(page.getByLabel("Remove Perp funding condition")).toBeDisabled();
   await expect(page.getByText(/of 1 true now/)).toBeVisible();
 
   await page.getByRole("textbox", { name: "Trigger name" }).fill("Funding only exit");
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Trigger name" })).toHaveValue("Funding only exit");
+  await expect(page.getByLabel("FUNDING target")).toBeVisible();
+  await expect(page.getByLabel("PRICE target")).toHaveCount(0);
   await page.getByRole("button", { name: /SAVE TRIGGER/ }).click();
   const saved = await page.evaluate(async () => {
     const ghosts = await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json() as Array<{ name: string; conditions: Array<{ metric: string }> }>;
