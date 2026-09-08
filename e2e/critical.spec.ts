@@ -408,15 +408,15 @@ test("mobile monitoring does not overflow horizontally", async ({ page }) => {
 
 test("Replay runs complete historical frames and exposes trigger inspection", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "TRY PAST MARKET DATA" }).click();
+  await page.getByRole("button", { name: "RUN DEMO REPLAY" }).click();
   const dialog = page.getByRole("dialog", { name: /SOL profit lock historical Replay/i });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("7", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("42/42 COMPLETE FRAMES · DEMO PROVENANCE")).toBeVisible();
+  await expect(dialog.getByText("42/42 COMPLETE SYNTHETIC FRAMES · DEMO REPLAY")).toBeVisible();
   await expect(dialog.getByText("Historical simulations do not predict future performance.")).toBeVisible();
 
   await dialog.getByRole("button", { name: "24H" }).click();
-  await expect(dialog.getByText("24/24 COMPLETE FRAMES · DEMO PROVENANCE")).toBeVisible();
+  await expect(dialog.getByText("24/24 COMPLETE SYNTHETIC FRAMES · DEMO REPLAY")).toBeVisible();
   await dialog.getByRole("button", { name: "Inspect trigger 1" }).click();
   await expect(dialog.getByText("TRIGGER", { exact: true })).toBeVisible();
 
@@ -455,8 +455,8 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   await page.screenshot({ path: testInfo.outputPath("discover-phase28-desktop-top.png"), fullPage: false });
 
   await preview.getByRole("button", { name: "REPLAY LAST 24H" }).click();
-  const replay = page.getByRole("region", { name: "24 hour deterministic Replay result" });
-  await expect(replay.getByText("WHAT DEMO HISTORY SHOWED")).toBeVisible();
+  const replay = page.getByRole("region", { name: "24 hour demo Replay result" });
+  await expect(replay.getByText("DEMO REPLAY RESULT · SYNTHETIC FRAMES")).toBeVisible();
   await expect(replay.getByText("FRAMES CHECKED")).toBeVisible();
   await expect(replay).toContainText("24");
   await expect(replay).toContainText("Your Simulation did not change");

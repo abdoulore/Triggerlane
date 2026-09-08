@@ -67,7 +67,7 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
     if (!host) return;
     let renderer: THREE.WebGLRenderer;
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch {
       setFallback(true);
       return;
@@ -88,7 +88,7 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
 
     const mint = new THREE.Color(0x70f2cc);
     const amber = new THREE.Color(0xe5bb68);
-    const quiet = new THREE.Color(0x33403c);
+    const quiet = new THREE.Color(0x66746f);
     const paused = blocked || status === "PAUSED";
     const filled = status === "FILLED";
     const terminal = ["CANCELLED", "EXPIRED", "FAILED"].includes(status);
@@ -202,6 +202,7 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
 
     const clock = new THREE.Clock();
     let request = 0;
+    let visible = true;
     const render = () => {
       const elapsed = clock.getElapsedTime();
       const still = reducedMotion || paused || terminal;
@@ -226,13 +227,26 @@ export function GhostCoreScene({ conditions, blocked, lifecycleStage, status }: 
       group.rotation.x += ((still ? 0 : pointerTarget.x) - group.rotation.x) * 0.035;
       group.rotation.y += ((still ? -0.04 : pointerTarget.y - 0.04) - group.rotation.y) * 0.035;
       renderer.render(scene, camera);
-      request = requestAnimationFrame(render);
+      if (!reducedMotion && visible && !document.hidden) request = requestAnimationFrame(render);
     };
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      visible = Boolean(entry?.isIntersecting);
+      if (visible && !reducedMotion && !document.hidden && !request) request = requestAnimationFrame(render);
+      else if (!visible && request) { cancelAnimationFrame(request); request = 0; }
+    }, { threshold: .01 });
+    const visibilityChange = () => {
+      if (document.hidden && request) { cancelAnimationFrame(request); request = 0; }
+      else if (!document.hidden && visible && !reducedMotion && !request) request = requestAnimationFrame(render);
+    };
+    visibilityObserver.observe(host);
+    document.addEventListener("visibilitychange", visibilityChange);
     render();
 
     return () => {
       cancelAnimationFrame(request);
       observer.disconnect();
+      visibilityObserver.disconnect();
+      document.removeEventListener("visibilitychange", visibilityChange);
       host.removeEventListener("pointermove", pointerMove);
       labelAssets.forEach(({ sprite, texture, material }) => { group.remove(sprite); texture.dispose(); material.dispose(); });
       scene.traverse((object) => {

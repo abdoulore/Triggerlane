@@ -11,15 +11,20 @@ interface SignalDatum {
   id: SignalId;
   label: string;
   shortLabel: string;
-  value: string;
+  waitingValue: string;
+  readyValue: string;
   target: string;
 }
 
-const SIGNALS: SignalDatum[] = [
-  { id: "price", label: "SOL price", shortLabel: "PRICE", value: "$284.14", target: "AT LEAST $280" },
-  { id: "funding", label: "Perp funding", shortLabel: "FUNDING", value: "+0.061%", target: "AT LEAST 0.050%" },
-  { id: "pnl", label: "Position P&L", shortLabel: "POSITION P&L", value: "+12.8%", target: "AT LEAST 10.0%" },
+export const SIGNALS: SignalDatum[] = [
+  { id: "price", label: "SOL price", shortLabel: "PRICE", waitingValue: "$276.40", readyValue: "$284.14", target: "AT LEAST $280" },
+  { id: "funding", label: "Perp funding", shortLabel: "FUNDING", waitingValue: "+0.032%", readyValue: "+0.061%", target: "AT LEAST 0.050%" },
+  { id: "pnl", label: "Position P&L", shortLabel: "POSITION P&L", waitingValue: "+7.4%", readyValue: "+12.8%", target: "AT LEAST 10.0%" },
 ];
+
+export function signalValue(signal: SignalDatum, index: number, stage: number) {
+  return stage >= index + 1 ? signal.readyValue : signal.waitingValue;
+}
 
 const STAGE_COPY = [
   { state: "OBSERVING", title: "The market is still forming.", body: "Three independent signals are being read from one complete market frame." },
@@ -102,7 +107,7 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
     if (!host) return;
     let renderer: THREE.WebGLRenderer;
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance" });
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     } catch {
       setFallback(true);
       return;
@@ -132,8 +137,8 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
     scene.add(world);
     const mint = new THREE.Color(0x70f2cc);
     const softMint = new THREE.Color(0x55bfa2);
-    const quiet = new THREE.Color(context === "landing" ? 0x52615c : 0x35413d);
-    const dim = new THREE.Color(0x202825);
+    const quiet = new THREE.Color(context === "landing" ? 0x7b8984 : 0x65736e);
+    const dim = new THREE.Color(0x39433f);
     const positions = [new THREE.Vector3(-3.75, 2.15, .2), new THREE.Vector3(-4.15, 0, -.35), new THREE.Vector3(-3.7, -2.15, .25)];
     const corePosition = new THREE.Vector3(1.05, 0, 0);
     const actionPosition = new THREE.Vector3(5.15, 0, -.3);
@@ -171,21 +176,21 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
       world.add(node);
       signalGroups.push(node);
 
-      const halo = new THREE.Mesh(new THREE.TorusGeometry(.82, .012, 5, 96), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: ready ? .7 : active ? .46 : .18 }));
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(.82, .012, 5, 96), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: ready ? .7 : active ? .5 : .32 }));
       halo.position.copy(node.position);
       halo.rotation.set(Math.PI / 2, 0, index * .35);
       world.add(halo);
       signalHalos.push(halo);
 
       const curve = new THREE.CatmullRomCurve3([node.position.clone(), new THREE.Vector3(-1.7, node.position.y * .72, node.position.z - .35), new THREE.Vector3(-.25, node.position.y * .18, -.55), corePosition.clone()]);
-      const path = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, .012, 5, false), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: ready ? .72 : .16 }));
+      const path = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, .012, 5, false), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: ready ? .72 : .3 }));
       world.add(path);
       const packet = new THREE.Mesh(new THREE.SphereGeometry(.075, 12, 12), new THREE.MeshBasicMaterial({ color: ready ? mint : dim }));
       packet.visible = ready;
       world.add(packet);
       paths.push({ curve, mesh: path, packet, ready });
 
-      const label = makeLabel([signal.shortLabel, signal.value, signal.target], ready ? "#70f2cc" : active ? "#a4f8de" : "#78847f");
+      const label = makeLabel([signal.shortLabel, signalValue(signal, index, stage), signal.target], ready ? "#70f2cc" : active ? "#a4f8de" : "#a1aaa7");
       if (label) {
         label.sprite.position.set(node.position.x - .35, node.position.y + .77, node.position.z);
         world.add(label.sprite);
@@ -287,13 +292,31 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
 
     const startedAt = performance.now();
     let request = 0;
-    const loop = (timestamp: number) => { renderFrame(Math.max(0, (timestamp - startedAt) / 1000)); request = requestAnimationFrame(loop); };
+    let visible = true;
+    const schedule = () => {
+      if (!request && !reducedMotion && visible && !document.hidden) request = requestAnimationFrame(loop);
+    };
+    const loop = (timestamp: number) => {
+      request = 0;
+      renderFrame(Math.max(0, (timestamp - startedAt) / 1000));
+      schedule();
+    };
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      visible = Boolean(entry?.isIntersecting);
+      if (visible) schedule();
+      else if (request) { cancelAnimationFrame(request); request = 0; }
+    }, { threshold: .01 });
+    const visibilityChange = () => { if (document.hidden && request) { cancelAnimationFrame(request); request = 0; } else schedule(); };
+    visibilityObserver.observe(host);
+    document.addEventListener("visibilitychange", visibilityChange);
     if (reducedMotion) renderFrame(1);
-    else request = requestAnimationFrame(loop);
+    else schedule();
 
     return () => {
       cancelAnimationFrame(request);
       observer.disconnect();
+      visibilityObserver.disconnect();
+      document.removeEventListener("visibilitychange", visibilityChange);
       host.removeEventListener("pointermove", pointerMove);
       host.removeEventListener("pointerleave", pointerLeave);
       host.removeEventListener("pointerdown", pointerDown);
@@ -311,7 +334,7 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
 
   if (fallback) {
     return <div className={`signal-engine-fallback signal-engine-fallback-${context}`} role="img" aria-label="Signal Engine fallback: price, funding, and position profit converge into one action.">
-      <div className="fallback-signal-stack">{SIGNALS.map((signal, index) => <div className={stage >= index + 1 ? "ready" : ""} key={signal.id}><i>{stage >= index + 1 ? <Check size={15} weight="bold" /> : `0${index + 1}`}</i><span><b>{signal.label}</b><small>{signal.value} · {signal.target}</small></span></div>)}</div>
+      <div className="fallback-signal-stack">{SIGNALS.map((signal, index) => <div className={stage >= index + 1 ? "ready" : ""} key={signal.id}><i>{stage >= index + 1 ? <Check size={15} weight="bold" /> : `0${index + 1}`}</i><span><b>{signal.label}</b><small>{signalValue(signal, index, stage)} · {signal.target}</small></span></div>)}</div>
       <div className={`fallback-convergence ${stage >= 3 ? "ready" : ""}`}><span>ALL TRUE</span><i /></div>
       <div className={`fallback-action ${stage >= 4 ? "fired" : ""}`}><small>ONE-SHOT ACTION</small><strong>SELL 25% SOL</strong><span>{stage >= 4 ? "FILLED ONCE" : "WAITING"}</span></div>
     </div>;
@@ -362,7 +385,7 @@ export function SignalEnginePrototype() {
         {SIGNALS.map((signal, index) => {
           const ready = stage >= index + 1;
           return <button className={`${ready ? "ready" : ""} ${focused === signal.id ? "focused" : ""}`} aria-pressed={focused === signal.id} onClick={() => setFocused(signal.id)} key={signal.id}>
-            <i>{ready ? <Check size={14} weight="bold" /> : `0${index + 1}`}</i><span><small>{signal.shortLabel}</small><b>{signal.value}</b></span><em>{ready ? "TRUE" : "WATCHING"}</em>
+            <i>{ready ? <Check size={14} weight="bold" /> : `0${index + 1}`}</i><span><small>{signal.shortLabel}</small><b>{signalValue(signal, index, stage)}</b></span><em>{ready ? "TRUE" : "WATCHING"}</em>
           </button>;
         })}
       </div>

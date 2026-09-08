@@ -2047,6 +2047,21 @@ body { font-size: 14px; }
 .replay-next-step small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .replay-next-step button { min-height: 44px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; color: #06100d; background: var(--accent); border: 0; border-radius: var(--radius); font: 800 9px var(--font-geist-mono); cursor: pointer; }
 
+/* Phase 39: keep the cinematic scale while bringing decisions into view sooner. */
+@media (min-width: 801px) {
+  .phase-24 .landing-section { padding-block: 84px; }
+  .phase-24 .beginner-section { padding-top: 92px; }
+  .phase-24 .beginner-walkthrough { min-height: 540px; margin-top: 48px; }
+  .phase-24 .trust-section { min-height: 560px; }
+  .phase-24 .landing-strategies { margin-top: 44px; }
+  .phase-24 .landing-strategies > a { min-height: 270px; }
+  .phase-24 .landing-final { min-height: 58dvh; }
+  .strategy-feature { min-height: 560px; }
+  .strategy-feature-copy { padding-top: 34px; padding-bottom: 34px; }
+  .feature-index { margin-bottom: 28px; }
+  .strategy-feature-copy dl { margin-top: 28px; }
+}
+
 @media (max-width: 1180px) {
   .onboarding-panel { top: 60px; }
   .onboarding-button span { display: none; }

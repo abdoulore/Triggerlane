@@ -630,7 +630,7 @@ describe("Ghost API", () => {
     expect(body.categories).toEqual(["Popular", "Accumulation", "Profit Taking", "Protection", "Advanced"]);
     expect(body.strategies).toHaveLength(4);
     expect(body.capabilities.unsupportedAdvancedMetrics).toEqual(["LIQUIDITY", "TVL", "VOLUME"]);
-    for (const strategy of body.strategies) expect(strategy.draft.conditions).toHaveLength(3);
+    expect(body.strategies.map((strategy: { draft: { conditions: unknown[] } }) => strategy.draft.conditions.length)).toEqual([3, 3, 3, 1]);
 
     const used = await app.inject({ method: "POST", url: "/api/strategies/euphoria-exit/use", headers: { cookie } });
     expect(used.statusCode).toBe(200);

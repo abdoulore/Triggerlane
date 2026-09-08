@@ -358,14 +358,14 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     draft: { name: "Downside Break", side: "SELL", amount: "50", amountType: "POSITION_PERCENT", maxSlippageBps: 75, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "230" }, { metric: "FUNDING", operator: "LTE", target: "-0.0002" }, { metric: "PNL", operator: "LTE", target: "-0.08" }] },
   },
   {
-    id: "calm-recovery",
-    name: "Calm Recovery",
+    id: "price-breakout",
+    name: "Price Breakout",
     category: "Accumulation",
-    description: "Enter a recovering SOL market only before funding becomes crowded and portfolio P&L stretches.",
-    thesis: "Measured re-entry",
+    description: "Buy once when SOL reaches a price you choose. A clear one-signal starting point you can expand later.",
+    thesis: "Simple price entry",
     featured: false,
-    metrics: ["PRICE", "FUNDING", "PNL"],
-    draft: { name: "Calm Recovery", side: "BUY", amount: "750", amountType: "USDC", maxSlippageBps: 40, expiresInHours: 72, conditions: [{ metric: "PRICE", operator: "GTE", target: "255" }, { metric: "FUNDING", operator: "LTE", target: "0.0003" }, { metric: "PNL", operator: "LTE", target: "0.05" }] },
+    metrics: ["PRICE"],
+    draft: { name: "Price Breakout", side: "BUY", amount: "750", amountType: "USDC", maxSlippageBps: 40, expiresInHours: 72, conditions: [{ metric: "PRICE", operator: "GTE", target: "255" }] },
   },
 ];
 

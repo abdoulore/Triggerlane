@@ -94,8 +94,10 @@ describe("Ghost domain", () => {
     expect(STRATEGY_TEMPLATES).toHaveLength(4);
     for (const strategy of STRATEGY_TEMPLATES) {
       expect(ghostDraftSchema.safeParse(strategy.draft).success).toBe(true);
-      expect(new Set(strategy.metrics)).toEqual(new Set(["PRICE", "FUNDING", "PNL"]));
+      expect(new Set(strategy.metrics)).toEqual(new Set(strategy.draft.conditions.map((condition) => condition.metric)));
+      expect(strategy.metrics.every((metric) => ["PRICE", "FUNDING", "PNL"].includes(metric))).toBe(true);
     }
+    expect(STRATEGY_TEMPLATES.some((strategy) => strategy.draft.conditions.length === 1)).toBe(true);
   });
 
   it("parses a supported natural-language Ghost into strict domain units", () => {
