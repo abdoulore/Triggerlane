@@ -1,6 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/session/anonymous", async (route) => {
+    const request = route.request();
+    await route.continue({
+      headers: { ...request.headers(), "content-type": "application/json" },
+      postData: JSON.stringify({ initialMode: "DEMO" }),
+    });
+  });
+});
+
 const productPages = [
   { path: "/trade", heading: /^SOL PERP \/ USDC$/ },
   { path: "/ghosts", heading: "Your triggers" },
@@ -140,7 +150,7 @@ test("loading, error, empty, unavailable, and terminal explanations stay explici
 
   await page.route("**/api/workspace", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "AUDIT_FAILURE", message: "Launch audit outage" } }) }));
   await page.goto("/trade");
-  await expect(page.getByRole("heading", { name: "Simulation unavailable" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Paper account unavailable" })).toBeVisible();
   await expect(page.getByText("No capital was moved.")).toBeVisible();
   await page.unroute("**/api/workspace");
 
@@ -167,7 +177,7 @@ test("first-time comprehension and honesty gate covers the ten product questions
   await expect(market.getByText("POSITION P&L", { exact: true })).toBeVisible();
   await expect(page.getByText(/acts when every active condition is true/i)).toBeVisible();
   await expect(page.getByText(/capital/i).first()).toBeVisible();
-  await expect(page.getByText(/DEMO FEED/i).first()).toBeVisible();
+  await expect(page.getByText(/GUIDED SCENARIO/i).first()).toBeVisible();
   await expect(page.getByText(/RIALO TARGET · NOT CONFIGURED/i).first()).toBeVisible();
 
   const text = await page.locator("body").innerText();
@@ -201,11 +211,11 @@ test("phase 30 keeps navigation calm and market detail progressive", async ({ pa
   await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
 
   await page.goto("/trade");
-  await page.getByRole("button", { name: "Open Simulation settings" }).click();
-  const simulation = page.getByRole("dialog", { name: "Simulation and data settings" });
+  await page.getByRole("button", { name: "Open paper trading settings" }).click();
+  const simulation = page.getByRole("dialog", { name: "Paper trading settings" });
   await expect(simulation).toBeVisible();
-  await expect(simulation.getByRole("group", { name: "Market data mode" })).toBeVisible();
-  await expect(simulation.getByText("EXECUTION ELIGIBLE", { exact: true })).toBeVisible();
+  await expect(simulation.getByText("VIRTUAL EXECUTION", { exact: true })).toBeVisible();
+  await expect(simulation.getByRole("button", { name: "USE LIVE MARKET DATA" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("simulation-menu-desktop.png"), animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(simulation).toBeHidden();

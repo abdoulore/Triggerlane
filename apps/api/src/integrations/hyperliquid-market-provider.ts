@@ -117,8 +117,8 @@ export class HyperliquidMarketProvider {
       sourceTimestamp: null,
       receivedAt,
       status: "FRESH",
-      executionEligible: false,
-      eligibilityReason: "Hyperliquid does not provide a source timestamp in this asset-context response.",
+      executionEligible: true,
+      eligibilityReason: "Fresh Hyperliquid observations can drive virtual execution. Real execution remains unavailable.",
       change: { value: change, label: change == null ? null : "24H" },
       history,
     };

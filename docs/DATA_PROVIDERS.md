@@ -2,7 +2,7 @@
 
 ## Gate 0 decision
 
-**Decision:** Hyperliquid Live Data is monitoring-only. The deterministic Demo Feed is execution-eligible.
+**Decision:** Fresh Hyperliquid observations may drive virtual paper execution. Guided Scenario data remains deterministic and isolated for teaching, replay, and tests.
 
 Checked again on 2026-09-06 against the official Hyperliquid REST, perpetuals, funding, and rate-limit documentation.
 
@@ -22,7 +22,7 @@ Checked again on 2026-09-06 against the official Hyperliquid REST, perpetuals, f
 - `funding` is stored as a ratio and displayed as a one-hour rate. Hyperliquid documents hourly funding payments and says the funding interval does not depend on the asset.
 - `prevDayPx` is the only source used for the visible 24-hour change. If it is absent, invalid, or zero, Triggerlane shows the change as unavailable.
 - The documented asset-context response has no provider source timestamp. This is an inference from the documented response schema, so Triggerlane keeps `sourceTimestamp` null and records `receivedAt` only after the response arrives.
-- Live execution remains disabled because receipt time is not treated as trusted source time.
+- `receivedAt` is sufficient for the explicitly virtual paper-trading engine, but is not treated as a trusted oracle timestamp or qualified for real settlement.
 
 ## Chart history
 
@@ -30,24 +30,26 @@ Checked again on 2026-09-06 against the official Hyperliquid REST, perpetuals, f
 - Supported product intervals are `1m`, `5m`, and `1h`; each visible selector sends that exact aggregation interval.
 - The provider documents a maximum of 5,000 recent candles. Triggerlane requests bounded windows, validates symbol/interval/finite close values, orders timestamps, and removes duplicates.
 - If candle history fails while the latest context succeeds, the current mark remains visible and the chart explicitly reports unavailable history.
-- Demo charts use only persisted `PRICE` observations from the active portfolio. Sparse manual steps remain sparse and are labeled Demo steps; no points are generated or interpolated.
+- Guided Scenario charts use only persisted `PRICE` observations from the active portfolio. Sparse manual steps remain sparse and are labeled scenario steps; no points are generated or interpolated.
 
 ## Cache and failure policy
 
 - The API owns one shared provider instance, coalesces concurrent requests by interval, and caches successful views for five seconds.
 - A refresh failure may retain the last Live snapshot only as visibly `STALE` data with its original receive time.
-- A first-request failure returns `UNAVAILABLE` with null price and funding. Demo values are never substituted into a Live response.
+- A first-request failure returns `UNAVAILABLE` with null price and funding. Guided Scenario values are never substituted into a Live response.
 - Provider failures enter a short retry backoff. A later successful request restores `FRESH` status and a new snapshot identifier.
 
 ## Product behavior
 
 - Live mode polls the public Hyperliquid info endpoint for SOL mark price and funding.
 - Observations display provider and receive time.
-- Live mode cannot start or settle triggers because `receivedAt` is not accepted as `sourceTimestamp`.
-- The application never falls back from Live to Demo without the user changing modes.
-- Demo Feed observations have deterministic values, explicit timestamps, stable sequence numbers, and `DEMO` provenance.
+- A leased server worker polls one shared provider snapshot and fans it out to active Live paper portfolios.
+- Fresh, complete, post-arm Live frames can execute against virtual capital even when the browser is closed.
+- Stale or unavailable data pauses affected triggers; a later fresh frame resumes evaluation.
+- The application never falls back from Live to Guided Scenario without an explicit user action.
+- Guided Scenario observations have deterministic values, explicit timestamps, stable sequence numbers, and `DEMO` provenance.
 
-## Qualification needed for live execution
+## Qualification needed for real execution
 
 A future provider must supply price and funding with compatible units, trusted source timestamps, ordering semantics, no more than 60 seconds of cross-metric skew, and acceptable usage terms.
 

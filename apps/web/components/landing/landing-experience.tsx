@@ -50,7 +50,7 @@ export function LandingExperience() {
   return <main className={`landing-page phase-24 stage-${stage}`}>
     <header className="landing-nav">
       <Link href="/" className="landing-brand" aria-label="Triggerlane home"><Path weight="duotone" size={22} /> TRIGGERLANE</Link>
-      <span>CONDITIONAL TRADING SIMULATION</span>
+      <span>LIVE CONDITIONAL PAPER TRADING</span>
       <Link href="/trade" className="nav-entry">CREATE A TRIGGER <ArrowRight size={15} /></Link>
     </header>
 
@@ -102,9 +102,9 @@ export function LandingExperience() {
     <section className="landing-section examples-section"><Reveal className="section-heading"><span className="landing-kicker">TRY A REAL CONFIGURATION</span><h2>Start simple. Add context only when it helps.</h2><p>Each example opens as an editable draft. Nothing is saved, armed, or funded until you review it.</p></Reveal><Reveal className="landing-strategies" delay={.08}>{STRATEGY_TEMPLATES.slice(0, 3).map((strategy, index) => <Link key={strategy.id} href={`/trade?strategy=${strategy.id}`}><span>0{index + 1} {strategy.category.toUpperCase()}</span><h3>{strategy.name}</h3><p>{strategy.description}</p><div>{strategy.metrics.map((metric) => <b key={metric}>{metric}</b>)}<ArrowRight size={16} /></div></Link>)}</Reveal></section>
 
     <section className="landing-section simulation-boundary" aria-labelledby="boundary-title">
-      <Reveal><span className="landing-kicker">THE SIMULATION BOUNDARY</span><h2 id="boundary-title">Useful now. Precise about what is not live.</h2><p>Explore conditional trading without real funds while Triggerlane keeps future execution claims separate.</p></Reveal>
+      <Reveal><span className="landing-kicker">THE EXECUTION BOUNDARY</span><h2 id="boundary-title">Live market decisions. Virtual capital.</h2><p>Explore conditional trading against live market observations while Triggerlane keeps real execution claims separate.</p></Reveal>
       <Reveal className="boundary-ledger" delay={.08}>
-        <article className="available"><i /><span>AVAILABLE NOW</span><h3>Triggerlane Simulation</h3><p>Demo market frames, virtual capital, simulated quotes, one-shot outcomes, and local receipts.</p><b>READY TO TRY</b></article>
+        <article className="available"><i /><span>AVAILABLE NOW</span><h3>Triggerlane Paper Trading</h3><p>Live market frames, virtual capital, virtual quotes, one-shot outcomes, and durable receipts.</p><b>READY TO TRY</b></article>
         <article><i /><span>FUTURE TARGET</span><h3>Rialo execution</h3><p>No Rialo network access, deployment, connected wallet, or real asset execution is claimed.</p><b>NOT CONFIGURED</b></article>
       </Reveal>
       <p className="boundary-note"><ShieldCheck size={18} /> Simulated capital only. Market data may be live, but no real assets are moved.</p>

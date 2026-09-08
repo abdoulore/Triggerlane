@@ -37,7 +37,7 @@ describe("Hyperliquid market provider", () => {
       change: { label: "24H" },
       sourceTimestamp: null,
       receivedAt: "2023-11-14T22:23:20.000Z",
-      executionEligible: false,
+      executionEligible: true,
       history: { status: "AVAILABLE", interval: "5m" },
     });
     expect(view.change.value).toBe("0.02244898");

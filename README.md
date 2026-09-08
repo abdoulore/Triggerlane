@@ -2,12 +2,12 @@
 
 **Set the signals. Enter when they align.**
 
-Triggerlane is a conditional trading simulation for building one-shot SOL/USDC orders from complete market states. A trigger can wait for price, funding, position profit, or any supported combination before it reserves virtual capital and executes exactly once.
+Triggerlane is a live paper-trading product for building one-shot SOL/USDC orders from complete market states. A trigger can wait for price, funding, position profit, or any supported combination before it reserves virtual capital and executes exactly once.
 
 > [!IMPORTANT]
-> Triggerlane currently uses simulated capital and simulated execution. Live market data is monitoring-only. No real assets move, and the Rialo execution target is not configured.
+> Triggerlane uses live Hyperliquid market observations with virtual capital and virtual execution. No real assets move, and the Rialo execution target is not configured.
 
-[Open the live Triggerlane Simulation](https://triggerlane.up.railway.app/)
+[Open Triggerlane](https://triggerlane.up.railway.app/)
 
 ![Triggerlane landing experience](docs/assets/screenshots/triggerlane-hero-desktop.png)
 
@@ -20,9 +20,9 @@ Traditional limit orders watch one price. Triggerlane lets a trader describe a f
 - use one condition when that is all the strategy needs;
 - reserve the intended virtual capital before execution;
 - inspect why a trigger is waiting, blocked, filled, cancelled, or expired;
-- prove a simulated fill with its source frame, quote, reservation, and ledger receipt.
+- prove a virtual fill with its source frame, quote, reservation, and ledger receipt.
 
-The current build is intentionally narrow: one market, a small qualified signal set, deterministic simulated settlement, and a visible boundary around everything that is not available.
+The current build is intentionally narrow: one market, a small qualified signal set, virtual settlement, and a visible boundary around everything that is not available.
 
 ## Product Tour
 
@@ -42,18 +42,18 @@ The current build is intentionally narrow: one market, a small qualified signal 
 - **Portfolio:** reconcile available and reserved virtual balances against an immutable local ledger.
 - **History:** review fills, blocked attempts, cancellations, expirations, and their evidence.
 - **Discover:** learn why multiple signals may matter, replay supported teaching examples, then load an editable draft for review.
-- **Replay:** test the same trigger against deterministic 24-hour, 7-day, or 30-day demo history.
+- **Replay:** test the same trigger against deterministic 24-hour, 7-day, or 30-day teaching history.
 
 ## Ninety-Second Demo
 
-1. Open `/trade` in **Demo Feed** mode.
+1. Open `/trade`; a new paper account starts with **Live Data**.
 2. Keep the default multi-signal SOL trigger or remove conditions until only the signals you want remain.
-3. Save the trigger, then start it. Triggerlane reserves the required simulated capital.
-4. Advance the Demo Feed and inspect the waiting reason as conditions become true.
+3. Save the trigger, then start it. Triggerlane reserves the required virtual capital.
+4. Leave the page or close the browser; the server continues evaluating fresh provider frames.
 5. Open the trigger detail view to see the complete stored frame and lifecycle.
-6. When every active condition agrees on one post-start frame, confirm the single simulated fill.
+6. When every active condition agrees on one post-start frame, confirm the single virtual fill.
 7. Open History or Portfolio and trace the receipt to its quote, reservation, and ledger entries.
-8. Switch to Live Data and confirm that execution controls become unavailable.
+8. Use the Guided Scenario only when you need a predictable teaching or test sequence.
 
 The controlled walkthrough is also available in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
@@ -64,15 +64,15 @@ The controlled walkthrough is also available in [docs/DEMO_SCRIPT.md](docs/DEMO_
 | Market | SOL/USDC only |
 | Signals | Price, funding, and position P&L |
 | Condition logic | One condition or `ALL` across up to three active conditions |
-| Capital | Seeded, simulated SOL and USDC |
-| Demo Feed | Deterministic and execution-eligible |
-| Live Data | Public Hyperliquid observations, monitoring-only |
-| Settlement | Simulated one-shot quote and local ledger receipt |
+| Capital | Seeded, virtual SOL and USDC |
+| Guided Scenario | Deterministic, isolated, and execution-eligible |
+| Live Data | Public Hyperliquid observations, eligible for virtual execution |
+| Settlement | Virtual one-shot quote and local ledger receipt |
 | AI Composer | Deterministic local parser, not a hosted AI model |
 | Accounts | Anonymous local sessions; no production identity system |
 | Rialo | Adapter boundary exists; network execution is not configured |
 
-Live observations cannot execute because the selected public provider does not supply the trusted source timestamp and ordering contract required by the engine. Triggerlane never silently changes data provenance. See [Data Providers](docs/DATA_PROVIDERS.md) and the [Rialo Adapter Boundary](docs/RIALO_ADAPTER.md).
+Hyperliquid's public response does not include a trusted source timestamp, so Triggerlane records provider provenance and receipt time and accepts the frame only for paper trading. It is not represented as oracle-grade or suitable for real settlement. See [Data Providers](docs/DATA_PROVIDERS.md) and the [Rialo Adapter Boundary](docs/RIALO_ADAPTER.md).
 
 ## Architecture
 
@@ -83,7 +83,7 @@ Next.js interface
 Fastify API + anonymous signed session
       |
       +--> condition compiler and target capability checks
-      +--> deterministic frame evaluator
+      +--> Live and Guided frame evaluator
       +--> reservation and one-shot settlement engine
       +--> SSE activity stream and background worker
       |
@@ -93,7 +93,7 @@ PGlite persistence
   executions, activities, outbox, and double-entry ledger
 
 Execution adapters
-  Simulation -> configured and executable with virtual capital
+  Virtual ledger -> configured and executable with virtual capital
   Rialo   -> explicit NOT_CONFIGURED capability boundary
 ```
 

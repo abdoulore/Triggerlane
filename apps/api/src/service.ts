@@ -169,7 +169,7 @@ export class GhostService {
 
   executionTargets() {
     return {
-      architecture: { current: "Live data -> GhostIR -> Simulation", target: "Live data -> GhostIR -> Rialo reactive execution" },
+      architecture: { current: "Live data -> GhostIR -> virtual ledger", target: "Live data -> GhostIR -> Rialo reactive execution" },
       targets: this.executionAdapters.map((adapter) => adapter.capabilities),
     };
   }
@@ -185,7 +185,7 @@ export class GhostService {
     };
   }
 
-  async createAnonymousSession(): Promise<{ token: string; userId: string; expiresAt: string }> {
+  async createAnonymousSession(initialMode: DataMode = "LIVE"): Promise<{ token: string; userId: string; expiresAt: string }> {
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     const userId = randomUUID();
@@ -201,8 +201,8 @@ export class GhostService {
         [sessionId, userId, tokenHash, expiresAt, createdAt],
       );
       await tx.query(
-        "INSERT INTO portfolios (id, user_id, generation, status, data_mode, demo_step, version, created_at, updated_at) VALUES ($1, $2, 1, 'ACTIVE', 'DEMO', 0, 1, $3, $3)",
-        [portfolioId, userId, createdAt],
+        "INSERT INTO portfolios (id, user_id, generation, status, data_mode, demo_step, version, created_at, updated_at) VALUES ($1, $2, 1, 'ACTIVE', $3, 0, 1, $4, $4)",
+        [portfolioId, userId, initialMode, createdAt],
       );
       await tx.query(
         "INSERT INTO balances (id, portfolio_id, asset, quantity_decimal, cost_basis_usdc_decimal, version, updated_at) VALUES ($1, $2, 'USDC', 15000, NULL, 1, $3), ($4, $2, 'SOL', 40, 10000, 1, $3)",
@@ -217,10 +217,10 @@ export class GhostService {
         "INSERT INTO ledger_entries (id, transaction_id, portfolio_id, asset, amount_decimal, cost_basis_delta_usdc_decimal, unit_price_usdc_decimal, type, created_at) VALUES ($1, $2, $3, 'USDC', 15000, NULL, 1, 'SEED', $4), ($5, $2, $3, 'SOL', 40, 10000, 250, 'SEED', $4)",
         [randomUUID(), ledgerId, portfolioId, createdAt, randomUUID()],
       );
-      await this.addActivity(tx, userId, null, "SANDBOX_READY", "Simulation funded with 15,000 virtual USDC and 40 virtual SOL.", {
+      await this.addActivity(tx, userId, null, "SANDBOX_READY", "Paper account funded with 15,000 virtual USDC and 40 virtual SOL.", {
         portfolioId,
       });
-      await this.createDemoFrame(tx, { id: portfolioId, user_id: userId, data_mode: "DEMO", demo_step: 0, version: 1, generation: 1 }, 0);
+      await this.createDemoFrame(tx, { id: portfolioId, user_id: userId, data_mode: initialMode, demo_step: 0, version: 1, generation: 1 }, 0);
     });
 
     return { token, userId, expiresAt };
@@ -248,7 +248,7 @@ export class GhostService {
       "SELECT id, user_id, data_mode, demo_step, version, generation FROM portfolios WHERE user_id = $1 AND status = 'ACTIVE'",
       [userId],
     );
-    if (!portfolio) throw new AppError("PORTFOLIO_NOT_FOUND", "Simulation portfolio was not found.", 404);
+    if (!portfolio) throw new AppError("PORTFOLIO_NOT_FOUND", "Paper portfolio was not found.", 404);
     return portfolio;
   }
 
@@ -289,7 +289,7 @@ export class GhostService {
   }
 
   async markets() {
-    return { markets: [{ asset: "SOL", instrument: "SOL-PERP", quoteAsset: "USDC", symbol: "SOL-PERP/USDC", priceType: "MARK_PRICE", metrics: ["PRICE", "FUNDING", "PNL"], modes: ["DEMO", "LIVE"], liveExecutionEligible: false }] };
+    return { markets: [{ asset: "SOL", instrument: "SOL-PERP", quoteAsset: "USDC", symbol: "SOL-PERP/USDC", priceType: "MARK_PRICE", metrics: ["PRICE", "FUNDING", "PNL"], modes: ["LIVE", "DEMO"], liveExecutionEligible: true, executionType: "VIRTUAL" }] };
   }
 
   async market(asset: string) {
@@ -343,14 +343,14 @@ export class GhostService {
         status: points.length > 0 ? "AVAILABLE" : "UNAVAILABLE",
         interval: "DEMO_STEP",
         points,
-        reason: points.length > 0 ? null : "Advance the Demo Feed to record the first observation.",
+        reason: points.length > 0 ? null : "Advance the Guided Scenario to record the first observation.",
       },
     };
   }
 
   async dataMode(userId: string) {
     const portfolio = await this.activePortfolio(this.database, userId);
-    return { mode: portfolio.data_mode, executionEligible: portfolio.data_mode === "DEMO" };
+    return { mode: portfolio.data_mode, executionEligible: true, executionType: "VIRTUAL" };
   }
 
   async portfolio(userId: string) {
@@ -387,12 +387,12 @@ export class GhostService {
       }
       await this.lifecycleHooks.beforePortfolioReplacement?.();
       await tx.query("UPDATE portfolios SET status='ARCHIVED', updated_at=$1 WHERE id=$2", [timestamp, current.id]);
-      await tx.query("INSERT INTO portfolios (id,user_id,generation,status,data_mode,demo_step,version,created_at,updated_at) VALUES ($1,$2,$3,'ACTIVE','DEMO',0,1,$4,$4)", [portfolioId, userId, current.generation + 1, timestamp]);
+      await tx.query("INSERT INTO portfolios (id,user_id,generation,status,data_mode,demo_step,version,created_at,updated_at) VALUES ($1,$2,$3,'ACTIVE',$4,0,1,$5,$5)", [portfolioId, userId, current.generation + 1, current.data_mode, timestamp]);
       await tx.query("INSERT INTO balances (id,portfolio_id,asset,quantity_decimal,cost_basis_usdc_decimal,version,updated_at) VALUES ($1,$2,'USDC',15000,NULL,1,$3),($4,$2,'SOL',40,10000,1,$3)", [randomUUID(), portfolioId, timestamp, randomUUID()]);
       await tx.query("INSERT INTO ledger_transactions (id,portfolio_id,type,idempotency_key,created_at) VALUES ($1,$2,'SEED',$3,$4)", [ledgerId, portfolioId, `seed:${portfolioId}`, timestamp]);
       await tx.query("INSERT INTO ledger_entries (id,transaction_id,portfolio_id,asset,amount_decimal,cost_basis_delta_usdc_decimal,unit_price_usdc_decimal,type,created_at) VALUES ($1,$2,$3,'USDC',15000,NULL,1,'SEED_CREDIT',$4),($5,$2,$3,'SOL',40,10000,250,'SEED_CREDIT',$4)", [randomUUID(), ledgerId, portfolioId, timestamp, randomUUID()]);
       await tx.query("INSERT INTO idempotency_records (user_id,operation,idempotency_key,resource_id,created_at) VALUES ($1,'RESET_PORTFOLIO',$2,$3,$4)", [userId, idempotencyKey, portfolioId, timestamp]);
-      await this.addActivity(tx, userId, null, "SANDBOX_RESET", "Simulation portfolio reset to its seeded state.", { portfolioId, generation: current.generation + 1 });
+      await this.addActivity(tx, userId, null, "SANDBOX_RESET", "Paper portfolio reset to its seeded state.", { portfolioId, generation: current.generation + 1 });
     });
     return this.workspace(userId);
   }
@@ -461,14 +461,129 @@ export class GhostService {
     return Boolean(result.rows[0]);
   }
 
+  private async livePaperTargets(limit = 100): Promise<PortfolioRow[]> {
+    const batchSize = Math.max(1, Math.min(Math.trunc(limit), 500));
+    return rows<PortfolioRow>(
+      this.database,
+      `SELECT DISTINCT p.id, p.user_id, p.data_mode, p.demo_step, p.version, p.generation
+       FROM portfolios p
+       WHERE p.status = 'ACTIVE'
+         AND p.data_mode = 'LIVE'
+         AND (
+           EXISTS (
+             SELECT 1 FROM ghosts g
+             WHERE g.portfolio_id = p.id
+               AND (g.status = 'WATCHING' OR (g.status = 'PAUSED' AND g.pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')))
+           )
+           OR EXISTS (
+             SELECT 1 FROM sessions s
+             WHERE s.user_id = p.user_id
+               AND s.expires_at > NOW()
+               AND s.last_seen_at > NOW() - INTERVAL '30 seconds'
+           )
+         )
+       ORDER BY p.id
+       LIMIT $1`,
+      [batchSize],
+    );
+  }
+
+  private async pauseLivePortfolio(portfolio: PortfolioRow, reason: string): Promise<number> {
+    return this.database.transaction(async (tx) => {
+      const active = await rows<{ id: string }>(
+        tx,
+        "SELECT id FROM ghosts WHERE user_id=$1 AND portfolio_id=$2 AND status='WATCHING'",
+        [portfolio.user_id, portfolio.id],
+      );
+      if (active.length === 0) return 0;
+      await tx.query(
+        "UPDATE ghosts SET status='PAUSED', pause_reason='DATA_STALE', updated_at=NOW() WHERE user_id=$1 AND portfolio_id=$2 AND status='WATCHING'",
+        [portfolio.user_id, portfolio.id],
+      );
+      for (const ghost of active) {
+        await this.addActivity(tx, portfolio.user_id, ghost.id, "PAUSED", "Live market data is unavailable. Virtual execution is paused until a fresh frame arrives.", { pauseReason: "DATA_STALE", providerReason: reason });
+      }
+      return active.length;
+    });
+  }
+
+  private async storeLivePaperFrame(portfolio: PortfolioRow, view: MarketView): Promise<boolean> {
+    if (view.status !== "FRESH" || !view.snapshotId || !view.receivedAt || view.price.value == null || view.funding.value == null) return false;
+    const snapshotId = view.snapshotId;
+    const receivedAt = view.receivedAt;
+    const price = view.price.value;
+    const funding = view.funding.value;
+    const frameId = `live:${createHash("sha256").update(`${portfolio.id}:${snapshotId}`).digest("hex")}`;
+    return this.database.transaction(async (tx) => {
+      const current = await this.activePortfolio(tx, portfolio.user_id);
+      if (current.id !== portfolio.id || current.data_mode !== "LIVE") return false;
+      if (await one<{ id: string }>(tx, "SELECT id FROM evaluation_frames WHERE id=$1", [frameId])) return false;
+
+      const sol = await this.balance(tx, portfolio.id, "SOL");
+      const priceId = `${frameId}:price`;
+      const fundingId = `${frameId}:funding`;
+      const pnlId = `${frameId}:pnl`;
+      const observations: EvaluationFrame["observations"] = {
+        PRICE: { id: priceId, metric: "PRICE", value: price, unit: "USDC_PER_SOL", provider: view.provider, sourceTimestamp: view.sourceTimestamp, receivedAt, provenance: "LIVE" },
+        FUNDING: { id: fundingId, metric: "FUNDING", value: funding, unit: "RATIO", provider: view.provider, sourceTimestamp: view.sourceTimestamp, receivedAt, provenance: "LIVE" },
+        PNL: { id: pnlId, metric: "PNL", value: calculatePnlRatio(sol.quantity_decimal, sol.cost_basis_usdc_decimal ?? "0", price), unit: "RATIO", provider: "triggerlane-virtual-ledger", sourceTimestamp: view.sourceTimestamp, receivedAt, provenance: "LIVE", portfolioVersion: current.version, derivedFromObservationIds: [priceId] },
+      };
+      for (const observation of Object.values(observations)) {
+        await tx.query(
+          `INSERT INTO market_observations
+            (id, portfolio_id, metric, value_decimal, unit, provider, provider_sequence, provenance, source_timestamp, received_at, portfolio_version)
+           VALUES ($1,$2,$3,$4,$5,$6,NULL,$7,$8,$9,$10)
+           ON CONFLICT (id) DO NOTHING`,
+          [observation.id, portfolio.id, observation.metric, observation.value, observation.unit, observation.provider, observation.provenance, observation.sourceTimestamp, observation.receivedAt, observation.portfolioVersion ?? null],
+        );
+      }
+      const frame: EvaluationFrame = {
+        id: frameId,
+        market: "SOL/USDC",
+        cutoffAt: receivedAt,
+        assembledAt: receivedAt,
+        mode: "LIVE",
+        completeness: "COMPLETE",
+        executionEligible: true,
+        observations,
+      };
+      await tx.query(
+        `INSERT INTO evaluation_frames
+          (id, portfolio_id, market, cutoff_at, assembled_at, mode, completeness, execution_eligible, observations)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [frame.id, portfolio.id, frame.market, frame.cutoffAt, frame.assembledAt, frame.mode, frame.completeness, frame.executionEligible, JSON.stringify(frame.observations)],
+      );
+      await this.evaluateWatchingGhosts(tx, portfolio.user_id, current, frame);
+      return true;
+    });
+  }
+
+  async processLivePaperTick(limit = 100): Promise<{ frames: number; paused: number; userIds: string[] }> {
+    const targets = await this.livePaperTargets(limit);
+    if (targets.length === 0) return { frames: 0, paused: 0, userIds: [] };
+    const view = await this.marketProvider.view("1m");
+    if (view.status !== "FRESH") {
+      let paused = 0;
+      for (const portfolio of targets) paused += await this.pauseLivePortfolio(portfolio, view.history.reason ?? "Hyperliquid is unavailable.");
+      return { frames: 0, paused, userIds: [] };
+    }
+    const userIds: string[] = [];
+    for (const portfolio of targets) {
+      if (await this.storeLivePaperFrame(portfolio, view)) userIds.push(portfolio.user_id);
+    }
+    return { frames: userIds.length, paused: 0, userIds };
+  }
+
   async runMaintenanceTick(
     ownerId: string,
     publish: (userId: string, event: Record<string, unknown>) => void,
-  ): Promise<{ leaseAcquired: boolean; expired: number; published: number }> {
-    if (!(await this.acquireWorkerLease(ownerId))) return { leaseAcquired: false, expired: 0, published: 0 };
+  ): Promise<{ leaseAcquired: boolean; expired: number; liveFrames: number; paused: number; published: number }> {
+    if (!(await this.acquireWorkerLease(ownerId))) return { leaseAcquired: false, expired: 0, liveFrames: 0, paused: 0, published: 0 };
     const expired = await this.expireDueGhosts();
+    const live = await this.processLivePaperTick();
+    for (const userId of live.userIds) publish(userId, { type: "market.frame.updated", mode: "LIVE", at: now() });
     const published = await this.publishOutbox(publish);
-    return { leaseAcquired: true, expired, published };
+    return { leaseAcquired: true, expired, liveFrames: live.frames, paused: live.paused, published };
   }
 
   async expireDueGhosts(limit = 100): Promise<number> {
@@ -963,9 +1078,6 @@ export class GhostService {
         return;
       }
       const portfolio = await this.activePortfolio(tx, userId);
-      if (portfolio.data_mode !== "DEMO") {
-        throw new AppError("LIVE_MONITORING_ONLY", "Switch to Demo Feed to start an executable trigger.", 409);
-      }
       const ghost = await one<GhostRow>(tx, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2 AND portfolio_id = $3", [ghostId, userId, portfolio.id]);
       if (!ghost) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
       if (ghost.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only a draft trigger can be started.", 409);
@@ -1004,18 +1116,20 @@ export class GhostService {
         asset,
         amount: amount.toFixed(),
       });
-      await this.addActivity(tx, userId, ghost.id, "WATCHING", "Trigger is evaluating complete Demo Feed frames.", {});
+      await this.addActivity(tx, userId, ghost.id, "WATCHING", portfolio.data_mode === "LIVE" ? "Trigger is watching fresh Hyperliquid frames for a virtual execution." : "Trigger is evaluating complete Guided Scenario frames.", { dataMode: portfolio.data_mode, executionType: "VIRTUAL" });
       await tx.query(
         "INSERT INTO idempotency_records (user_id, operation, idempotency_key, resource_id, created_at) VALUES ($1, 'ARM_GHOST', $2, $3, NOW())",
         [userId, idempotencyKey, ghost.id],
       );
 
-      // Arming establishes the boundary. Evaluate only a newly stored frame so
-      // a condition that was true before the user armed cannot execute retroactively.
-      const nextStep = (portfolio.demo_step + 1) % DEMO_FRAMES.length;
-      const frame = await this.createDemoFrame(tx, portfolio, nextStep);
-      await tx.query("UPDATE portfolios SET demo_step = $1, updated_at = NOW() WHERE id = $2", [nextStep, portfolio.id]);
-      await this.evaluateWatchingGhosts(tx, userId, { ...portfolio, demo_step: nextStep }, frame);
+      // The first eligible frame must arrive after arming. Guided scenarios create
+      // that frame explicitly; Live paper orders wait for the next provider snapshot.
+      if (portfolio.data_mode === "DEMO") {
+        const nextStep = (portfolio.demo_step + 1) % DEMO_FRAMES.length;
+        const frame = await this.createDemoFrame(tx, portfolio, nextStep);
+        await tx.query("UPDATE portfolios SET demo_step = $1, updated_at = NOW() WHERE id = $2", [nextStep, portfolio.id]);
+        await this.evaluateWatchingGhosts(tx, userId, { ...portfolio, demo_step: nextStep }, frame);
+      }
     });
     return this.ghost(userId, ghostId);
   }
@@ -1043,7 +1157,6 @@ export class GhostService {
 
   async resumeGhost(userId: string, ghostId: string) {
     const portfolio = await this.activePortfolio(this.database, userId);
-    if (portfolio.data_mode !== "DEMO") throw new AppError("LIVE_MONITORING_ONLY", "Switch to Demo Feed before resuming.", 409);
     const updated = await this.database.query(
       "UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND portfolio_id = $3 AND status = 'PAUSED' RETURNING id",
       [ghostId, userId, portfolio.id],
@@ -1082,20 +1195,12 @@ export class GhostService {
     await this.database.transaction(async (tx) => {
       const portfolio = await this.activePortfolio(tx, userId);
       await tx.query("UPDATE portfolios SET data_mode = $1, version = version + 1, updated_at = NOW() WHERE id = $2", [mode, portfolio.id]);
-      if (mode === "LIVE") {
-        const active = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [userId, portfolio.id]);
-        await tx.query("UPDATE ghosts SET status = 'PAUSED', pause_reason = 'LIVE_MONITORING_ONLY', updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'WATCHING'", [userId, portfolio.id]);
-        for (const ghost of active) {
-          await this.addActivity(tx, userId, ghost.id, "PAUSED", "Live Data is monitoring-only; execution paused.");
-        }
-      } else {
-        const paused = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
-        await tx.query("UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
-        for (const ghost of paused) {
-          await this.addActivity(tx, userId, ghost.id, "RESUMED", "Demo Feed restored; trigger awaits a fresh frame.");
-        }
+      const legacyPaused = await rows<{ id: string }>(tx, "SELECT id FROM ghosts WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
+      await tx.query("UPDATE ghosts SET status = 'WATCHING', pause_reason = NULL, was_qualified = FALSE, updated_at = NOW() WHERE user_id = $1 AND portfolio_id = $2 AND status = 'PAUSED' AND pause_reason = 'LIVE_MONITORING_ONLY'", [userId, portfolio.id]);
+      for (const ghost of legacyPaused) {
+        await this.addActivity(tx, userId, ghost.id, "RESUMED", "Live paper trading is available; this trigger awaits a fresh frame.");
       }
-      await this.addActivity(tx, userId, null, "DATA_MODE_CHANGED", mode === "DEMO" ? "Demo Feed selected." : "Live Data selected in monitoring-only mode.", { mode });
+      await this.addActivity(tx, userId, null, "DATA_MODE_CHANGED", mode === "DEMO" ? "Guided Scenario selected." : "Live market data selected for virtual execution.", { mode, executionType: "VIRTUAL" });
     });
     return this.workspace(userId);
   }
@@ -1103,7 +1208,7 @@ export class GhostService {
   async advanceDemo(userId: string) {
     return this.database.transaction(async (tx) => {
       const portfolio = await this.activePortfolio(tx, userId);
-      if (portfolio.data_mode !== "DEMO") throw new AppError("LIVE_MONITORING_ONLY", "Demo Feed controls are unavailable in Live mode.", 409);
+      if (portfolio.data_mode !== "DEMO") throw new AppError("GUIDED_SCENARIO_ONLY", "Guided Scenario controls are unavailable during live paper trading.", 409);
       const nextStep = (portfolio.demo_step + 1) % DEMO_FRAMES.length;
       const frame = await this.createDemoFrame(tx, portfolio, nextStep);
       await tx.query("UPDATE portfolios SET demo_step = $1, updated_at = NOW() WHERE id = $2", [nextStep, portfolio.id]);
@@ -1115,6 +1220,9 @@ export class GhostService {
   async processEvaluationFrame(userId: string, frame: EvaluationFrame): Promise<void> {
     await this.database.transaction(async (tx) => {
       const portfolio = await this.activePortfolio(tx, userId);
+      if (frame.mode !== portfolio.data_mode) {
+        throw new AppError("DATA_MODE_MISMATCH", `A ${frame.mode} frame cannot evaluate a ${portfolio.data_mode} portfolio.`, 409);
+      }
       await tx.query(
         `INSERT INTO evaluation_frames
           (id, portfolio_id, market, cutoff_at, assembled_at, mode, completeness, execution_eligible, observations)

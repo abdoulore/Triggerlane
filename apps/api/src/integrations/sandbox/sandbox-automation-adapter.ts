@@ -6,7 +6,7 @@ export class SandboxAutomationAdapter extends CapabilityCheckedAdapter {
     target: "SANDBOX",
     configured: true,
     predicates: ["PRICE", "FUNDING", "PNL"],
-    provenance: ["DEMO"],
+    provenance: ["LIVE", "DEMO"],
     actions: ["BUY", "SELL"],
     assets: ["SOL", "USDC"],
     semantics: ["ONE_SHOT", "COMPLETE_FRAME", "EXPIRATION", "MAX_SLIPPAGE"],

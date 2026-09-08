@@ -9,5 +9,5 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 export function SandboxDisclaimer() {
-  return <aside className="sandbox-disclaimer" aria-label="Simulation execution disclaimer">Simulation uses virtual funds and simulated execution. Live market data may be shown, but no real assets move.</aside>;
+  return <aside className="sandbox-disclaimer" aria-label="Virtual execution notice">Trades use virtual funds. No real assets move.</aside>;
 }

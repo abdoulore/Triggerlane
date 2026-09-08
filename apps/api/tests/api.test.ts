@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
+import type { MarketView } from "@ghost/domain";
 import { createDatabase } from "../src/db";
 import { buildServer } from "../src/server";
 import { GhostService } from "../src/service";
@@ -30,7 +31,7 @@ describe("Ghost API", () => {
   beforeAll(async () => {
     database = await createDatabase(":memory:");
     app = await buildServer(database);
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const setCookie = session.headers["set-cookie"]!;
     cookie = Array.isArray(setCookie) ? setCookie[0]! : setCookie;
   }, 30_000);
@@ -50,7 +51,7 @@ describe("Ghost API", () => {
   });
 
   it("persists and evaluates a single active condition", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const sessionHeader = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(sessionHeader) ? sessionHeader[0]! : sessionHeader;
     const response = await app.inject({
@@ -68,7 +69,7 @@ describe("Ghost API", () => {
   });
 
   it("evaluates one fresh post-arm frame without firing from pre-arm evidence", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const sessionHeader = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(sessionHeader) ? sessionHeader[0]! : sessionHeader;
     const created = await app.inject({
@@ -123,7 +124,7 @@ describe("Ghost API", () => {
   });
 
   it("rejects cross-account reads and mutations", async () => {
-    const secondSession = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const secondSession = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = secondSession.headers["set-cookie"]!;
     const secondCookie = Array.isArray(header) ? header[0]! : header;
 
@@ -226,7 +227,7 @@ describe("Ghost API", () => {
   });
 
   it("prevents concurrent Ghosts from over-reserving one portfolio", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const setCookie = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(setCookie) ? setCookie[0]! : setCookie;
     const payload = { ...sellDraft("Concurrent A"), amount: "75" };
@@ -254,7 +255,7 @@ describe("Ghost API", () => {
   });
 
   it("exposes a reconciled portfolio ledger and names every reservation owner", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Portfolio owner") })).json();
@@ -306,7 +307,7 @@ describe("Ghost API", () => {
   });
 
   it("expires paused triggers and releases capital without a market frame", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Paused deadline") })).json();
@@ -328,7 +329,7 @@ describe("Ghost API", () => {
   });
 
   it("expires after stale market data pauses evaluation", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -345,7 +346,7 @@ describe("Ghost API", () => {
   });
 
   it("expires draft triggers without requiring a market frame", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Draft deadline") })).json();
@@ -358,7 +359,7 @@ describe("Ghost API", () => {
   });
 
   it("expires a trigger paused by Live Data without a new frame", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Live deadline") })).json();
@@ -373,7 +374,7 @@ describe("Ghost API", () => {
   });
 
   it("keeps reset atomic when portfolio replacement fails", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -392,7 +393,7 @@ describe("Ghost API", () => {
   });
 
   it("serializes reset and deadline sweeping without leaking capital", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -412,7 +413,7 @@ describe("Ghost API", () => {
   });
 
   it("serializes cancellation and deadline sweeping to one terminal outcome", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -437,7 +438,7 @@ describe("Ghost API", () => {
   });
 
   it("rolls settlement back when a failure occurs before commit", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -464,7 +465,7 @@ describe("Ghost API", () => {
   });
 
   it("rejects an idempotency key reused for a different trigger", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const first = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Key owner") })).json();
@@ -478,7 +479,7 @@ describe("Ghost API", () => {
   });
 
   it("keeps archived portfolio triggers from executing after reset", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const before = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
@@ -522,7 +523,7 @@ describe("Ghost API", () => {
   });
 
   it("does not combine conditions from different frames", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const created = await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Frame guard") });
@@ -614,10 +615,84 @@ describe("Ghost API", () => {
     expect(activity.rows[0]?.count).toBe("1");
   });
 
-  it("keeps live mode monitoring-only", async () => {
-    const response = await app.inject({ method: "POST", url: "/api/data-mode", headers: { cookie }, payload: { mode: "LIVE" } });
+  it("enables Live market data for virtual execution", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "LIVE" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+    const response = await app.inject({ method: "GET", url: "/api/data-mode", headers: { cookie: liveCookie } });
     expect(response.statusCode).toBe(200);
-    expect(response.json().portfolio.dataMode).toBe("LIVE");
+    expect(response.json()).toMatchObject({ mode: "LIVE", executionEligible: true, executionType: "VIRTUAL" });
+  });
+
+  it("fills a Live paper trigger from a post-arm provider frame without a browser and deduplicates the snapshot", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "LIVE" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: liveCookie } })).json();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: liveCookie },
+      payload: { name: "Live paper entry", side: "BUY", amount: "300", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "300" }] },
+    });
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+    expect(armed.json().status).toBe("WATCHING");
+
+    const receivedAt = new Date().toISOString();
+    const liveView: MarketView = {
+      mode: "LIVE",
+      instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "MARK_PRICE" },
+      provider: "Hyperliquid",
+      snapshotId: "hl:test-paper-frame",
+      price: { value: "250", unit: "USDC_PER_SOL" },
+      funding: { value: "0.00003", unit: "RATIO", period: "1H" },
+      sourceTimestamp: null,
+      receivedAt,
+      status: "FRESH",
+      executionEligible: true,
+      eligibilityReason: "Fresh Live frame for virtual execution.",
+      change: { value: "0.01", label: "24H" },
+      history: { status: "AVAILABLE", interval: "1m", points: [{ id: "test", at: receivedAt, value: "250" }], reason: null },
+    };
+    const worker = new GhostService(database, {}, { view: async () => liveView });
+    expect((await worker.processLivePaperTick()).frames).toBeGreaterThan(0);
+    expect((await app.inject({ method: "GET", url: `/api/ghosts/${created.json().id}`, headers: { cookie: liveCookie } })).json()).toMatchObject({ status: "FILLED", execution: { receipt: { executionMode: "SIMULATED" } } });
+
+    expect(await worker.processLivePaperTick()).toMatchObject({ frames: 0, paused: 0 });
+    const stored = await database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM evaluation_frames WHERE portfolio_id=$1 AND mode='LIVE'", [workspace.portfolio.id]);
+    expect(stored.rows[0]?.count).toBe("1");
+  });
+
+  it("pauses Live paper triggers on provider failure and resumes on the next fresh frame", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "LIVE" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+    const created = await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: liveCookie }, payload: { name: "Recovery guard", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "100" }] } });
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+
+    let view: MarketView = {
+      mode: "LIVE",
+      instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "MARK_PRICE" },
+      provider: "Hyperliquid",
+      snapshotId: null,
+      price: { value: null, unit: "USDC_PER_SOL" },
+      funding: { value: null, unit: "RATIO", period: "1H" },
+      sourceTimestamp: null,
+      receivedAt: null,
+      status: "UNAVAILABLE",
+      executionEligible: false,
+      eligibilityReason: "Provider offline.",
+      change: { value: null, label: null },
+      history: { status: "UNAVAILABLE", interval: "1m", points: [], reason: "Provider offline." },
+    };
+    const worker = new GhostService(database, {}, { view: async () => view });
+    expect((await worker.processLivePaperTick()).paused).toBe(1);
+    expect((await app.inject({ method: "GET", url: `/api/ghosts/${created.json().id}`, headers: { cookie: liveCookie } })).json()).toMatchObject({ status: "PAUSED", pauseReason: "DATA_STALE" });
+
+    const receivedAt = new Date().toISOString();
+    view = { ...view, snapshotId: "hl:test-recovery", price: { value: "250", unit: "USDC_PER_SOL" }, funding: { value: "0", unit: "RATIO", period: "1H" }, receivedAt, status: "FRESH", executionEligible: true, eligibilityReason: "Fresh Live frame.", history: { status: "AVAILABLE", interval: "1m", points: [], reason: null } };
+    expect((await worker.processLivePaperTick()).frames).toBeGreaterThan(0);
+    expect((await app.inject({ method: "GET", url: `/api/ghosts/${created.json().id}`, headers: { cookie: liveCookie } })).json()).toMatchObject({ status: "WATCHING", pauseReason: null });
   });
 
   it("reports execution target capabilities without claiming Rialo access", async () => {
@@ -654,7 +729,7 @@ describe("Ghost API", () => {
       app.inject({ method: "GET", url: "/api/ghosts", headers: { cookie } }),
       app.inject({ method: "GET", url: "/api/history", headers: { cookie } }),
     ]);
-    expect(markets.json().markets[0]).toMatchObject({ symbol: "SOL-PERP/USDC", instrument: "SOL-PERP", priceType: "MARK_PRICE", liveExecutionEligible: false });
+    expect(markets.json().markets[0]).toMatchObject({ symbol: "SOL-PERP/USDC", instrument: "SOL-PERP", priceType: "MARK_PRICE", liveExecutionEligible: true, executionType: "VIRTUAL" });
     expect(market.json()).toMatchObject({ asset: "SOL", quoteAsset: "USDC" });
     expect(mode.json()).toMatchObject({ executionEligible: true });
     expect(portfolio.json().balances).toHaveProperty("USDC");
@@ -664,7 +739,7 @@ describe("Ghost API", () => {
   });
 
   it("returns only stored Demo observations as chart history", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const first = await app.inject({ method: "GET", url: "/api/market-view", headers: { cookie: isolatedCookie } });
@@ -698,7 +773,7 @@ describe("Ghost API", () => {
   });
 
   it("resets a portfolio idempotently into a new seeded generation", async () => {
-    const session = await app.inject({ method: "POST", url: "/api/session/anonymous" });
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
     const isolatedCookie = Array.isArray(header) ? header[0]! : header;
     const before = (await app.inject({ method: "GET", url: "/api/portfolio", headers: { cookie: isolatedCookie } })).json();

@@ -134,7 +134,7 @@ export function compileGhostIR(draftInput: GhostDraft, compiledAt = new Date()):
       metric: condition.metric,
       unit: condition.metric === "PRICE" ? "USDC_PER_SOL" : "RATIO",
       maxAgeMs: 15_000,
-      allowedProvenance: ["DEMO"],
+      allowedProvenance: ["LIVE", "DEMO"],
     })),
     constraints: {
       maxSlippageBps: draft.maxSlippageBps,

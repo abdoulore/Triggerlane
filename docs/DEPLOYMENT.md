@@ -47,13 +47,13 @@ Keep the service at one replica while it uses PGlite. Moving to multiple replica
 ## First Deployment Check
 
 1. Open `/health/ready` and confirm the database reports `ready`.
-2. Open the landing page and start an anonymous Simulation session.
+2. Open the landing page and start an anonymous paper-trading session.
 3. Create and start a one-condition trigger.
-4. Advance Demo Feed until it fills and inspect its receipt.
+4. In Guided Scenario, advance the stored steps until the trigger fills and inspect its receipt.
 5. Run Replay and open Portfolio and History.
 6. Refresh the browser and confirm the same session data remains.
 7. Redeploy the same commit and confirm the data still remains after restart.
-8. Switch to Live Data and confirm execution remains disabled.
+8. Switch to Live Data and confirm a fresh provider frame remains eligible for virtual execution.
 
 ## Rollback Rule
 

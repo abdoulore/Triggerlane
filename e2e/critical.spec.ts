@@ -1,6 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/session/anonymous", async (route) => {
+    const request = route.request();
+    await route.continue({
+      headers: { ...request.headers(), "content-type": "application/json" },
+      postData: JSON.stringify({ initialMode: "DEMO" }),
+    });
+  });
+});
+
 async function openWatchingGhostDetail(page: Page) {
   await page.goto("/trade");
   if ((page.viewportSize()?.width ?? 1440) <= 680) await page.getByRole("button", { name: "BUILD A TRIGGER" }).click();
@@ -170,7 +180,7 @@ test("landing remains framed and nonblank on mobile", async ({ page }, testInfo)
 test("creates, arms, settles, and receipts one Ghost exactly once", async ({ page }) => {
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "SOL PERP / USDC" })).toBeVisible();
-  await expect(page.getByText("DEMO FEED · EXECUTION ELIGIBLE")).toBeVisible();
+  await expect(page.getByText("GUIDED SCENARIO · ISOLATED")).toBeVisible();
   await expect(page.getByRole("region", { name: "Market overview" })).toContainText("EVIDENCE");
   await expect(page.getByRole("region", { name: "Capital commitment preview" })).toContainText("10 SOL");
   await expect(page.getByLabel(/Trigger lifecycle:/)).toContainText("WATCHING");
@@ -183,11 +193,11 @@ test("creates, arms, settles, and receipts one Ghost exactly once", async ({ pag
   await expect(page.locator("#portfolio").getByText("$2,584.00", { exact: true })).toBeVisible();
 
   for (let step = 0; step < 4; step += 1) {
-    await page.getByRole("button", { name: "ADVANCE FEED" }).click();
+    await page.getByRole("button", { name: "ADVANCE SCENARIO" }).click();
   }
 
   await expect(page.getByRole("status").filter({ hasText: "TRIGGER FILLED" })).toBeVisible();
-  await page.getByRole("button", { name: "ADVANCE FEED" }).click();
+  await page.getByRole("button", { name: "ADVANCE SCENARIO" }).click();
   await page.getByRole("link", { name: "History" }).click();
 
   const settlement = page.locator(".history-audit-row").filter({ hasText: "SOL profit lock" });
@@ -285,12 +295,12 @@ test("Ghost Detail has a complete no-WebGL fallback", async ({ page }) => {
   await expect(page.getByText("OF 1 READY", { exact: true })).toBeVisible();
 });
 
-test("Live Data visibly refuses execution", async ({ page }) => {
+test("Live Data remains available for virtual execution", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "Open Simulation settings" }).click();
-  await page.getByRole("dialog", { name: "Simulation and data settings" }).getByRole("button", { name: "LIVE DATA", exact: true }).click();
-  await expect(page.getByText("LIVE DATA · MONITORING ONLY")).toBeVisible();
-  await expect(page.getByRole("button", { name: "ADVANCE FEED" })).toBeDisabled();
+  await page.getByRole("button", { name: "Open paper trading settings" }).click();
+  await page.getByRole("dialog", { name: "Paper trading settings" }).getByRole("button", { name: "USE LIVE MARKET DATA" }).click();
+  await expect(page.getByText("LIVE DATA · VIRTUAL EXECUTION")).toBeVisible();
+  await expect(page.getByRole("button", { name: "ADVANCE SCENARIO" })).toBeHidden();
 });
 
 test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, testInfo) => {
@@ -333,6 +343,21 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious, serious.map((violation) => `${violation.id}: ${violation.help}`).join("\n")).toEqual([]);
+});
+
+test("market context never enters the Composer rail at laptop width", async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto("/trade");
+  await expect(page.getByRole("heading", { name: /^SOL PERP \/ USDC$/ })).toBeVisible();
+  const boundaries = await page.evaluate(() => {
+    const context = document.querySelector(".market-context")!.getBoundingClientRect();
+    const composer = document.querySelector(".composer-panel")!.getBoundingClientRect();
+    const updated = document.querySelector(".market-context-updated")!.getBoundingClientRect();
+    const heading = document.querySelector(".composer-panel .panel-heading")!.getBoundingClientRect();
+    return { contextRight: context.right, composerLeft: composer.left, labelsOverlap: !(updated.right <= heading.left || updated.left >= heading.right || updated.bottom <= heading.top || updated.top >= heading.bottom) };
+  });
+  expect(boundaries.contextRight).toBeLessThanOrEqual(boundaries.composerLeft);
+  expect(boundaries.labelsOverlap).toBe(false);
 });
 
 test("Composer supports one signal or an explicit combination", async ({ page }, testInfo) => {
@@ -774,15 +799,15 @@ test("AI Composer requires review before applying a structured Ghost", async ({ 
   expect(serious).toEqual([]);
 });
 
-test("Simulation menu reports real system capability and closes with Escape", async ({ page }) => {
+test("Paper trading menu reports real system capability and closes with Escape", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("button", { name: "Open Simulation settings" }).click();
-  const menu = page.getByRole("dialog", { name: "Simulation and data settings" });
+  await page.getByRole("button", { name: "Open paper trading settings" }).click();
+  const menu = page.getByRole("dialog", { name: "Paper trading settings" });
   await expect(menu).toBeVisible();
   await menu.getByText("CONNECTION DETAILS", { exact: true }).click();
   await expect(menu.getByText("Price and funding")).toBeVisible();
   await expect(menu.getByText("Trigger engine")).toBeVisible();
-  await expect(menu.getByText("Execution", { exact: true })).toBeVisible();
+  await expect(menu.locator("details").getByText("Execution", { exact: true })).toBeVisible();
   await expect(menu.getByText("Rialo remains unavailable and is not reported as connected.")).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page }).include(".simulation-menu").withTags(["wcag2a", "wcag2aa"]).analyze();

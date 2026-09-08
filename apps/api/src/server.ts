@@ -60,7 +60,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
   async function requireSession(request: FastifyRequest): Promise<void> {
     const token = readSessionToken(request);
     const session = await service.resolveSession(token);
-    if (!session || !token) throw new AppError("UNAUTHORIZED", "Start a Simulation session first.", 401);
+    if (!session || !token) throw new AppError("UNAUTHORIZED", "Start a paper-trading session first.", 401);
     request.userId = session.userId;
     request.sessionToken = token;
   }
@@ -77,8 +77,15 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     return value;
   }
 
+  let tickRunning = false;
   const backgroundTick = async () => {
-    await service.runMaintenanceTick(workerId, (userId, event) => events.emit(userId, event));
+    if (tickRunning) return;
+    tickRunning = true;
+    try {
+      await service.runMaintenanceTick(workerId, (userId, event) => events.emit(userId, event));
+    } finally {
+      tickRunning = false;
+    }
   };
   if (process.env.NODE_ENV !== "test") await backgroundTick();
   const workerTimer = process.env.NODE_ENV === "test" ? null : setInterval(() => void backgroundTick().catch((error) => app.log.error(error)), 1_000);
@@ -97,7 +104,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
       return reply.status(error.statusCode).send({ error: { code: error.code, message: error.message } });
     }
     app.log.error(error);
-    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "The Simulation could not complete that action." } });
+    return reply.status(500).send({ error: { code: "INTERNAL_ERROR", message: "Triggerlane could not complete that action." } });
   });
 
   app.get("/health", async () => ({ ok: true, service: "ghost-api", database: "pglite-postgres" }));
@@ -133,7 +140,8 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     const currentToken = readSessionToken(request);
     const current = await service.resolveSession(currentToken);
     if (current) return { userId: current.userId, expiresAt: current.expiresAt };
-    const session = await service.createAnonymousSession();
+    const requestedMode = (request.body as { initialMode?: string } | undefined)?.initialMode;
+    const session = await service.createAnonymousSession(requestedMode === "DEMO" ? "DEMO" : "LIVE");
     await service.trackAnalytics(session.userId, "sandbox_started", { environment: config.environment });
     reply.setCookie(COOKIE_NAME, session.token, {
       path: "/",
@@ -222,7 +230,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
 
   app.post("/api/data-mode", { preHandler: requireSession }, async (request) => {
     const { mode } = request.body as { mode?: string };
-    if (mode !== "DEMO" && mode !== "LIVE") throw new AppError("INVALID_DATA_MODE", "Choose Demo Feed or Live Data.", 422);
+    if (mode !== "DEMO" && mode !== "LIVE") throw new AppError("INVALID_DATA_MODE", "Choose Guided Scenario or Live Data.", 422);
     const workspace = await service.setDataMode(request.userId!, mode);
     changed(request.userId!, "market.connection.updated", { mode });
     return workspace;

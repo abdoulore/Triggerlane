@@ -577,12 +577,12 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         <header><Lightning size={17} weight="duotone" /><span>WHAT HAPPENS WHEN YOU START</span></header>
         <ol><li><i>1</i><span><b>Reserve virtual capital</b><small>{quantity.format(commitmentAmount)} {commitmentAsset} is set aside before monitoring.</small></span></li><li><i>2</i><span><b>Wait for every active rule</b><small>{state.conditions.length === 1 ? "One selected signal must qualify." : `All ${state.conditions.length} selected signals must qualify in one frame.`}</small></span></li><li><i>3</i><span><b>{actionConsequence} once</b><small>A receipt is stored. Cancel or expiry releases unused capital.</small></span></li></ol>
       </section>
-      <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Simulation ready</span></button>
+      <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Virtual execution ready</span></button>
       {error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{error}</b><small>No capital moved. Your editable Composer values remain in place.</small></div></div>}
 
       {shownDraft?.status === "DRAFT" ? (
-        <button className="primary-action" onClick={() => arm.mutate(shownDraft.id)} disabled={arm.isPending || workspace.portfolio.dataMode !== "DEMO" || !canCommit}>
-          {workspace.portfolio.dataMode !== "DEMO" ? "LIVE DATA CANNOT EXECUTE" : arm.isPending ? "STARTING..." : "START WATCHING"}<Lightning size={18} weight="fill" />
+        <button className="primary-action" onClick={() => arm.mutate(shownDraft.id)} disabled={arm.isPending || !canCommit}>
+          {arm.isPending ? "STARTING..." : "START WATCHING"}<Lightning size={18} weight="fill" />
         </button>
       ) : (
         <button className="primary-action" onClick={() => create.mutate()} disabled={create.isPending}>
@@ -603,7 +603,7 @@ function CompilerPanel({ preview, close }: { preview: CompilerPreview; close: ()
   const rialo = preview.compilations.find((item) => item.target === "RIALO")!;
   return <section className="compiler-panel">
     <header className="replay-header"><div><span className="eyebrow">TRIGGER CONTRACT · IR V{preview.ir.version}</span><h2 id="compiler-title">Execution contract</h2><p>One intent, checked independently against each execution target.</p></div><button className="icon-button" title="Close compiler" onClick={close}><X size={18} /></button></header>
-    <div className="compiler-targets"><div className="ready"><span>SIMULATION</span><b>{sandbox.status}</b><small>Ledger-backed execution venue</small></div><div><span>RIALO</span><b>{rialo.status.replaceAll("_", " ")}</b><small>No network or toolchain configured</small></div></div>
+    <div className="compiler-targets"><div className="ready"><span>VIRTUAL EXECUTION</span><b>{sandbox.status}</b><small>Ledger-backed paper venue</small></div><div><span>RIALO</span><b>{rialo.status.replaceAll("_", " ")}</b><small>No network or toolchain configured</small></div></div>
     <div className="compiler-grid">
       <section><span className="eyebrow">SEMANTICS</span><dl><div><dt>Evaluation</dt><dd>{preview.ir.semantics.evaluationMode.replace("_", " ")}</dd></div><div><dt>Lifecycle</dt><dd>{preview.ir.semantics.oneShot ? "ONE SHOT" : "RECURRING"}</dd></div><div><dt>Frame skew</dt><dd>{preview.ir.semantics.maxCrossMetricSkewMs / 1000}s max</dd></div><div><dt>Expires</dt><dd>{dateTime(preview.ir.constraints.expiresAt)}</dd></div></dl></section>
       <section><span className="eyebrow">ACTION</span><div className="compiler-action-flow"><b>{preview.ir.action.assetIn}</b><ArrowRight size={16} /><b>{preview.ir.action.assetOut}</b></div><p>{preview.ir.action.type} · {preview.ir.action.amount.value} {preview.ir.action.amount.type.replace("_", " ")} · {preview.ir.constraints.maxSlippageBps} bps max slippage</p></section>
@@ -754,8 +754,8 @@ function FeedControls({ workspace, step, stepping }: { workspace: Workspace; ste
   return (
     <div className="feed-controls">
       <div className="feed-sequence"><span>SCENARIO</span>{[0, 1, 2, 3, 4, 5].map((index) => <i key={index} className={index <= workspace.portfolio.demoStep ? "passed" : ""} />)}</div>
-      <button className="icon-button" title={playing ? "Pause Demo Feed" : "Play Demo Feed"} onClick={() => setPlaying((value) => !value)} disabled={workspace.portfolio.dataMode !== "DEMO"}>{playing ? <Pause size={17} weight="fill" /> : <Play size={17} weight="fill" />}</button>
-      <button className="step-button" onClick={step} disabled={stepping || workspace.portfolio.dataMode !== "DEMO"}>ADVANCE FEED<ArrowRight size={16} /></button>
+      <button className="icon-button" title={playing ? "Pause Guided Scenario" : "Play Guided Scenario"} onClick={() => setPlaying((value) => !value)} disabled={workspace.portfolio.dataMode !== "DEMO"}>{playing ? <Pause size={17} weight="fill" /> : <Play size={17} weight="fill" />}</button>
+      <button className="step-button" onClick={step} disabled={stepping || workspace.portfolio.dataMode !== "DEMO"}>ADVANCE SCENARIO<ArrowRight size={16} /></button>
     </div>
   );
 }
@@ -830,8 +830,8 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
           <div className="tape-label"><Broadcast size={16} /><span>ACTIVITY</span></div>
           <div className="tape-events"><AnimatePresence initial={false}>{workspace.activities.slice(0, 3).map((activity) => <motion.span key={activity.id} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}><i />{activity.message}<time>{dateTime(activity.created_at)}</time></motion.span>)}</AnimatePresence></div>
         </section>
-        <FeedControls workspace={workspace} step={() => step.mutate()} stepping={step.isPending} />
-        <AnimatePresence>{selected?.status === "FILLED" && <motion.div className="execution-flash" role="status" initial={{ opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span><Check size={24} weight="bold" /></span><div><b>TRIGGER FILLED</b><small>Simulated settlement committed exactly once</small></div></motion.div>}</AnimatePresence>
+        {!modeIsLive && <FeedControls workspace={workspace} step={() => step.mutate()} stepping={step.isPending} />}
+        <AnimatePresence>{selected?.status === "FILLED" && <motion.div className="execution-flash" role="status" initial={{ opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span><Check size={24} weight="bold" /></span><div><b>TRIGGER FILLED</b><small>Virtual settlement committed exactly once</small></div></motion.div>}</AnimatePresence>
       </main>
       <button className="mobile-compose-trigger" aria-expanded={composerOpen} aria-controls="trigger-composer-sheet" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
       <div id="trigger-composer-sheet" className={`composer-shell ${composerOpen ? "open" : ""}`}><button className="composer-sheet-close" title="Close Composer" onClick={() => setComposerOpen(false)}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
@@ -1251,7 +1251,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
       <div className="detail-grid">
         <section className="detail-main">
           <div className="observation-panel">
-            <div className="observation-heading"><div><span className="eyebrow">EXACT OBSERVATIONS</span><h2>The frame this trigger can prove</h2><p>Each value, target, provider, and timestamp comes from the stored evaluation frame.</p></div><div><span>{frame.mode} DATA</span><b>{frame.executionEligible ? "EXECUTION ELIGIBLE" : "VIEW ONLY"}</b></div></div>
+            <div className="observation-heading"><div><span className="eyebrow">EXACT OBSERVATIONS</span><h2>The frame this trigger can prove</h2><p>Each value, target, provider, and timestamp comes from the stored evaluation frame.</p></div><div><span>{frame.mode} DATA</span><b>{frame.executionEligible ? "VIRTUAL EXECUTION ELIGIBLE" : "VIEW ONLY"}</b></div></div>
             <div className="observation-table" role="table" aria-label="Exact condition observations">
               {ghost.evaluations.map((evaluation) => { const observation = frame.observations[evaluation.metric]; return <div className={evaluation.satisfied ? "ready" : ""} role="row" key={evaluation.metric}><span className="observation-state" role="cell">{evaluation.satisfied ? <CheckCircle size={19} weight="fill" /> : <Pulse size={19} />}</span><div role="cell"><small>CONDITION</small><b>{metricLabels[evaluation.metric]}</b></div><div role="cell"><small>OBSERVED</small><b>{formatMetric(evaluation.metric, evaluation.current)}</b></div><div role="cell"><small>TARGET</small><b>{evaluation.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(evaluation.metric, evaluation.target)}</b></div><div role="cell"><small>PROVIDER</small><b>{providerLabel(observation.provider)}</b></div><div role="cell"><small>SOURCE TIME</small><b>{dateTime(observation.sourceTimestamp ?? observation.receivedAt)}</b></div></div>; })}
             </div>
@@ -1260,7 +1260,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
           {ghost.execution && <section className="detail-proof"><div className="proof-heading"><span className="eyebrow">SETTLEMENT PROOF</span><h2>One action, fully accounted for</h2><p>The receipt binds the qualifying frame to the quote, reservation, and immutable ledger transaction.</p></div><Receipt execution={{ ...ghost.execution, ghost_name: ghost.name } as Execution} /></section>}
         </section>
         <aside className="detail-side">
-          <div className="terms-panel"><span className="eyebrow">CONTROLLED CAPITAL</span><div><span>Reservation status</span><b>{ghost.reservation?.status ?? "NOT RESERVED"}</b></div><div><span>Reservation ID</span><b>{ghost.reservation?.id ? ghost.reservation.id.slice(0, 12) : "NONE"}</b></div><div><span>Data mode</span><b>{frame.mode === "DEMO" ? "DEMO FEED" : "LIVE DATA"}</b></div><div><span>Frame state</span><b>{frame.completeness}</b></div><div><span>Execution mode</span><b>SIMULATED</b></div></div>
+          <div className="terms-panel"><span className="eyebrow">CONTROLLED CAPITAL</span><div><span>Reservation status</span><b>{ghost.reservation?.status ?? "NOT RESERVED"}</b></div><div><span>Reservation ID</span><b>{ghost.reservation?.id ? ghost.reservation.id.slice(0, 12) : "NONE"}</b></div><div><span>Data mode</span><b>{frame.mode === "DEMO" ? "GUIDED SCENARIO" : "LIVE DATA"}</b></div><div><span>Frame state</span><b>{frame.completeness}</b></div><div><span>Execution mode</span><b>VIRTUAL</b></div></div>
           <div className="timeline-panel"><span className="eyebrow">WHAT HAPPENED</span>{ghost.activities?.map((activity) => <div className="timeline-item" key={activity.id}><i /><div><b>{activity.type.replaceAll("_", " ")}</b><p>{activity.message}</p><small>{dateTime(activity.created_at)}</small></div></div>)}</div>
         </aside>
       </div>
@@ -1293,7 +1293,7 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   const [marketInterval, setMarketInterval] = useState<"1m" | "5m" | "1h">("5m");
 
   useEffect(() => {
-    api("/api/session/anonymous", { method: "POST" }).then(() => setSessionReady(true)).catch((error) => setBootError(error instanceof Error ? error.message : "Simulation could not start."));
+    api("/api/session/anonymous", { method: "POST", body: JSON.stringify({ initialMode: "LIVE" }) }).then(() => setSessionReady(true)).catch((error) => setBootError(error instanceof Error ? error.message : "Paper account could not start."));
   }, []);
   const workspaceQuery = useQuery({ queryKey: ["workspace"], queryFn: () => api<Workspace>("/api/workspace"), enabled: sessionReady });
   const workspace = workspaceQuery.data;
@@ -1328,13 +1328,12 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   const clearSession = useMutation({ mutationFn: () => api("/api/session", { method: "DELETE" }), onSuccess: () => window.location.reload() });
 
   const fatalMessage = bootError ?? (workspaceQuery.error instanceof Error ? workspaceQuery.error.message : null);
-  if (fatalMessage) return <div className="fatal-state" role="alert"><BrandIcon size={44} /><span className="eyebrow">WORKSPACE CONNECTION FAILED</span><h1>Simulation unavailable</h1><p>{fatalMessage}</p><div className="capital-safe"><ShieldCheck size={17} /><span><b>No capital was moved.</b> Your saved Simulation remains unchanged.</span></div><button onClick={() => window.location.reload()}>RETRY CONNECTION</button></div>;
+  if (fatalMessage) return <div className="fatal-state" role="alert"><BrandIcon size={44} /><span className="eyebrow">WORKSPACE CONNECTION FAILED</span><h1>Paper account unavailable</h1><p>{fatalMessage}</p><div className="capital-safe"><ShieldCheck size={17} /><span><b>No capital was moved.</b> Your saved paper account remains unchanged.</span></div><button onClick={() => window.location.reload()}>RETRY CONNECTION</button></div>;
   if (!workspace) return <LoadingView />;
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
   const market = marketQuery.data?.mode === workspace.portfolio.dataMode ? marketQuery.data : undefined;
   const capabilities = capabilitiesQuery.data ?? { environment: "development", executionMode: "SANDBOX", features: { aiComposer: true, replay: true, multiStage: false, rialo: false, demoFeed: true, advancedConditions: false } };
   const marketTime = market?.sourceTimestamp ?? market?.receivedAt ?? null;
-  const sourceAge = marketTime ? Math.max(0, (Date.now() - new Date(marketTime).getTime()) / 1000).toFixed(modeIsLive ? 1 : 0) : "--";
   const provider = providerLabel(market?.provider ?? (modeIsLive ? "Hyperliquid" : workspace.frame.observations.PRICE.provider));
   const feedStatus = marketQuery.isPending ? "LOADING" : market?.status ?? "UNAVAILABLE";
   const sourceTime = market?.sourceTimestamp ? dateTime(market.sourceTimestamp) : market?.receivedAt ? `RECEIVED ${dateTime(market.receivedAt)}` : "UNAVAILABLE";
@@ -1346,18 +1345,18 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
         <Logo />
         <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers<span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length || ""}</span></a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
         <div className="header-tools">
-          <button className={`environment-button ${modeIsLive ? "monitoring" : ""}`} aria-label={`Open ${modeIsLive ? "Live monitoring" : "Simulation"} settings`} aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setOnboardingOpen(false); }}><i /><span>{modeIsLive ? "LIVE MONITORING" : "SIMULATION"}</span><CaretRight size={14} /></button>
+          <button className="environment-button" aria-label="Open paper trading settings" aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setOnboardingOpen(false); }}><i /><span>PAPER TRADING</span><CaretRight size={14} /></button>
           <button className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>
         </div>
       </header>
       <AnimatePresence>{(connectionsOpen || accountOpen) && <motion.button className="menu-backdrop" aria-label="Close open menu" onClick={() => { setConnectionsOpen(false); setAccountOpen(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
       <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => setOnboardingOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view} close={() => setOnboardingOpen(false)} /></>}</AnimatePresence>
-      <AnimatePresence>{connectionsOpen && <motion.div id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Simulation and data settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
-        <div className="simulation-menu-heading"><div><span className="eyebrow">ENVIRONMENT</span><strong>{modeIsLive ? "Live monitoring" : "Simulation"}</strong></div><span className={modeIsLive ? "monitoring" : "eligible"}>{modeIsLive ? "VIEW ONLY" : "EXECUTION ELIGIBLE"}</span></div>
-        <div className="simulation-mode-switch" role="group" aria-label="Market data mode"><button aria-pressed={!modeIsLive} className={!modeIsLive ? "active" : ""} onClick={() => setMode.mutate("DEMO")}>SIMULATION</button><button aria-pressed={modeIsLive} className={modeIsLive ? "active" : ""} onClick={() => setMode.mutate("LIVE")}>LIVE DATA</button></div>
-        {modeIsLive && <div className="simulation-warning"><Warning size={16} /><span><b>Monitoring only</b><small>Live observations cannot execute or settle simulated capital.</small></span></div>}
-        <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>{modeIsLive ? "Freshness" : "Evidence"}</dt><dd>{modeIsLive ? (sourceAge === "--" ? "UNAVAILABLE" : `${sourceAge}s ago`) : (market ? "STORED FRAME" : "UNAVAILABLE")}</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
-        <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>{modeIsLive ? "DISABLED" : "SIMULATED · AVAILABLE"}</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
+      <AnimatePresence>{connectionsOpen && <motion.div id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Paper trading settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+        <div className="simulation-menu-heading"><div><span className="eyebrow">PAPER ACCOUNT</span><strong>{modeIsLive ? "Live market execution" : "Guided Scenario"}</strong></div><span className="eligible">VIRTUAL EXECUTION</span></div>
+        <div className="simulation-warning paper-market-status"><Broadcast size={16} /><span><b>{modeIsLive ? "Live market data" : "Deterministic lesson"}</b><small>{modeIsLive ? "Fresh Hyperliquid observations can trigger virtual trades." : "Stored steps let you learn and replay trigger behavior."}</small></span></div>
+        {!modeIsLive && <button className="guided-live-action" onClick={() => setMode.mutate("LIVE")} disabled={setMode.isPending}><Broadcast size={15} />{setMode.isPending ? "CONNECTING..." : "USE LIVE MARKET DATA"}</button>}
+        <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Execution</dt><dd>VIRTUAL</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
+        <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>VIRTUAL · AVAILABLE</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
       </motion.div>}</AnimatePresence>
       <AnimatePresence>{accountOpen && <motion.div id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button><button className="account-danger" onClick={() => clearSession.mutate()}><Power size={16} />CLEAR SESSION</button></motion.div>}</AnimatePresence>
       {view === "trade" && <TradeView workspace={workspace} market={market} marketLoading={marketQuery.isPending || marketQuery.isFetching && !market} interval={marketInterval} onInterval={setMarketInterval} capabilities={capabilities} />}
@@ -1368,7 +1367,7 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
       {view === "detail" && ghostId && <DetailView workspace={workspace} ghostId={ghostId} />}
       <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio"><Pulse size={18} />Portfolio</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Discover</a><button onClick={() => { setAccountOpen(true); setConnectionsOpen(false); }}><UserCircle size={18} />Account</button></nav>
       <SandboxDisclaimer />
-      <footer className="system-footer"><span><i className={modeIsLive ? "amber" : "green"} />{modeIsLive ? "LIVE DATA · MONITORING ONLY" : "DEMO FEED · EXECUTION ELIGIBLE"}</span><span>SOL-PERP/USDC</span><span>SNAPSHOT {market?.snapshotId?.slice(0, 8) ?? "PENDING"}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
+      <footer className="system-footer"><span><i className="green" />{modeIsLive ? "LIVE DATA · VIRTUAL EXECUTION" : "GUIDED SCENARIO · ISOLATED"}</span><span>SOL-PERP/USDC</span><span>SNAPSHOT {market?.snapshotId?.slice(0, 8) ?? "PENDING"}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
     </AppShell>
   );
 }
