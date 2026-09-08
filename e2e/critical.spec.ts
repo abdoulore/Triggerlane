@@ -580,7 +580,8 @@ test("History distinguishes settlements, blocked attempts, and stopped Ghosts", 
 
   await page.getByPlaceholder("Trigger or outcome").fill("Blocked");
   await expect(page.locator(".history-audit-row")).toHaveCount(1);
-  await page.getByRole("button", { name: /Blocked Audit/ }).click();
+  const blockedOutcome = page.getByRole("button", { name: /Blocked Audit/ });
+  await blockedOutcome.click();
   await expect(page).toHaveURL(/item=attempt%3A/);
   const blocked = page.getByRole("dialog", { name: "Blocked Audit blocked audit record" });
   await expect(blocked).toContainText("Conditions qualified. Settlement was prevented.");
@@ -588,6 +589,7 @@ test("History distinguishes settlements, blocked attempts, and stopped Ghosts", 
   await expect(blocked).toContainText("Owned balances did not change");
   await page.screenshot({ path: testInfo.outputPath("history-blocked-audit-desktop.png"), fullPage: false });
   await page.getByTitle("Close audit record").click();
+  await expect(blockedOutcome).toBeFocused();
   await expect(page.getByPlaceholder("Trigger or outcome")).toHaveValue("Blocked");
   await expect(page.locator(".history-audit-row")).toHaveCount(1);
   await page.getByRole("button", { name: /Blocked Audit/ }).click();

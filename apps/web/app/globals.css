@@ -1889,6 +1889,18 @@ body { font-size: 14px; }
 }
 
 /* Phase 27: reconciled capital and outcome-first audit history. */
+.portfolio-page { display: flex; flex-direction: column; }
+.portfolio-page .portfolio-title { order: 1; }
+.portfolio-page .portfolio-provenance { order: 2; }
+.portfolio-page .capital-map-section { order: 3; }
+.portfolio-page .reservation-section { order: 4; }
+.portfolio-page .phase-38-overview { order: 5; margin-top: 34px; grid-template-columns: minmax(0, 1fr) 280px; }
+.portfolio-page .ledger-section { order: 6; }
+.portfolio-commitment-note { min-width: 0; display: flex; align-items: center; gap: 13px; padding: 24px; border-left: 1px solid var(--line-strong); }
+.portfolio-commitment-note svg { flex: 0 0 auto; color: var(--accent); }
+.portfolio-commitment-note span, .portfolio-commitment-note b, .portfolio-commitment-note small { display: block; }
+.portfolio-commitment-note b { font: 13px var(--font-geist-mono); }
+.portfolio-commitment-note small { margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .portfolio-page .portfolio-overview { grid-template-columns: minmax(430px, 1.25fr) 1.75fr; }
 .capital-equation { min-height: 74px; display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--line-strong); }
 .capital-equation > span { min-width: 0; }
@@ -1929,6 +1941,7 @@ body { font-size: 14px; }
 .outcome-blocked .outcome-capital b { color: var(--amber); }
 .phase-27-ledger .outcome-evidence b { color: var(--accent); font-size: 10px; }
 .phase-27-ledger .outcome-evidence span { font-size: 8px; }
+.outcome-label time { display: block; margin-top: 7px; color: var(--muted-2); font: 10px/1.35 var(--font-geist-mono); white-space: nowrap; }
 .phase-27-ledger .history-audit-row[aria-expanded="true"] { background: rgba(112,242,204,.025); box-shadow: inset 2px 0 var(--accent); }
 .phase-27-empty { min-height: 360px; align-content: center; }
 .history-empty-outcomes { display: flex; flex-wrap: wrap; justify-content: center; gap: 1px; margin: 20px 0; }
@@ -1937,6 +1950,7 @@ body { font-size: 14px; }
 
 @media (max-width: 1180px) {
   .portfolio-page .portfolio-overview { grid-template-columns: 1fr; }
+  .portfolio-commitment-note { border-left: 0; border-top: 1px solid var(--line-strong); }
   .phase-27-ledger > header, .phase-27-ledger .history-audit-row { grid-template-columns: 42px 105px minmax(240px, 1.35fr) minmax(160px, .75fr) minmax(210px, 1fr) 130px; gap: 10px; }
 }
 

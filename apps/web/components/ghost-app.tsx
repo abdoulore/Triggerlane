@@ -138,6 +138,7 @@ interface Execution {
   modeled_slippage_bps: number;
   completed_at: string;
   receipt: Record<string, any>;
+  portfolioGeneration?: number;
 }
 
 interface ExecutionAttempt {
@@ -194,6 +195,7 @@ interface Workspace {
   identity: { id: string; label: string };
   portfolio: {
     id: string;
+    generation: number;
     dataMode: "DEMO" | "LIVE";
     demoStep: number;
     version: number;
@@ -203,6 +205,7 @@ interface Workspace {
   ghosts: GhostRecord[];
   activities: Activity[];
   executions: Execution[];
+  archivedExecutions: Execution[];
   executionAttempts: ExecutionAttempt[];
   ledger: LedgerTransaction[];
   reservations: CapitalReservation[];
@@ -1039,16 +1042,11 @@ function PortfolioView({ workspace, market }: { workspace: Workspace; market?: M
     <main className="page-view portfolio-page">
       <div className="page-title portfolio-title"><div><span className="eyebrow">CAPITAL CONTROL</span><h1>Your virtual portfolio</h1><p>See what you own, what remains available, and exactly which trigger controls every reserved amount.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
 
-      <section className="portfolio-provenance" aria-label="Portfolio data provenance"><span><i />{workspace.portfolio.dataMode} VALUATION</span><b>SIMULATED CAPITAL</b><small>{market?.price.value == null ? "Current valuation unavailable; owned quantities remain unchanged" : `Valued from ${market.provider} snapshot ${market.snapshotId?.slice(0, 12) ?? "unavailable"} at $${money.format(Number(market.price.value))} / SOL`}</small></section>
+      <section className="portfolio-provenance" aria-label="Portfolio data provenance"><span><i />{workspace.portfolio.dataMode} MARKET MARK</span><b>VIRTUAL BALANCES · ACCOUNT {workspace.portfolio.generation}</b><small>{market?.price.value == null ? "Current mark unavailable; committed virtual quantities remain unchanged" : `Display value marked from ${market.provider} snapshot ${market.snapshotId?.slice(0, 12) ?? "unavailable"} at $${money.format(Number(market.price.value))} / SOL`}</small></section>
 
-      <section className="portfolio-overview" aria-label="Portfolio overview">
+      <section className="portfolio-overview phase-38-overview" aria-label="Portfolio overview">
         <div className="equity-statement"><span>TOTAL SIMULATED EQUITY</span><strong>{equity == null ? "--" : `$${money.format(equity)}`}</strong><p>{quantity.format(Number(sol.quantity))} SOL plus {quantity.format(Number(usdc.quantity))} USDC, marked from the same snapshot shown on Trade.</p><div className="capital-equation" aria-label="Capital reconciliation equation"><span><small>AVAILABLE</small><b>{availableValue == null ? "--" : `$${money.format(availableValue)}`}</b></span><i>+</i><span><small>RESERVED</small><b>{reservedValue == null ? "--" : `$${money.format(reservedValue)}`}</b></span><i>=</i><span><small>TOTAL</small><b>{equity == null ? "--" : `$${money.format(equity)}`}</b></span></div></div>
-        <dl className="capital-totals">
-          <div><dt>AVAILABLE</dt><dd><b>{availableValue == null ? "--" : `$${money.format(availableValue)}`}</b><small>free for new triggers</small></dd></div>
-          <div><dt>RESERVED</dt><dd><b>{reservedValue == null ? "--" : `$${money.format(reservedValue)}`}</b><small>{activeReservations.length} capital assignment{activeReservations.length === 1 ? "" : "s"}</small></dd></div>
-          <div><dt>AUTOMATION COVERAGE</dt><dd><b>{coverage == null ? "--" : `${coverage.toFixed(1)}%`}</b><small>of marked equity controlled</small></dd></div>
-          <div><dt>LOCKED</dt><dd><b>{lockedCount ? `${lockedCount} settling` : "$0.00"}</b><small>{lockedCount ? "settlement in progress" : "nothing in flight"}</small></dd></div>
-        </dl>
+        <div className="portfolio-commitment-note"><LockSimple size={20} weight="duotone" /><span><b>{coverage == null ? "MARK UNAVAILABLE" : `${coverage.toFixed(1)}% controlled by triggers`}</b><small>{activeReservations.length} active assignment{activeReservations.length === 1 ? "" : "s"} · {lockedCount ? `${lockedCount} settling` : "nothing settling"}</small></span></div>
       </section>
 
       <section className="capital-map-section" aria-labelledby="capital-map-title">
@@ -1144,7 +1142,7 @@ function TerminalAudit({ ghost, close }: { ghost: GhostRecord; close: () => void
   return <div className={`receipt terminal-audit outcome-${ghost.status.toLowerCase()} printable-audit`}><div className="receipt-header"><div><span className="receipt-seal terminal"><X size={22} /></span><div><span className="eyebrow">TERMINAL OUTCOME RECORD</span><h2>{ghost.name}</h2></div></div><button autoFocus className="icon-button no-print" title="Close audit record" onClick={close}><X size={18} /></button></div><div className="blocked-hero"><span>{ghost.status === "FAILED" ? "EXECUTION FAILED" : "NO EXECUTION"}</span><h3>{ghost.status.replaceAll("_", " ")}</h3><p>{explanation}</p></div><div className="audit-timelines"><section><span className="eyebrow">LAST CONDITION STATE</span>{ghost.evaluations.map((evaluation) => <div className={`audit-step ${evaluation.satisfied ? "complete" : "absent"}`} key={evaluation.metric}><i>{evaluation.satisfied && <Check size={11} />}</i><div><b>{evaluation.metric} {evaluation.satisfied ? "ready" : "not ready"}</b><p>{formatMetric(evaluation.metric, evaluation.current)} {evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</p></div></div>)}</section><section><span className="eyebrow">SETTLEMENT TIMELINE</span><div className="audit-step blocked"><i><X size={11} /></i><div><b>Monitoring ended</b><p>{dateTime(ghost.updatedAt)}</p></div></div><div className="audit-step restored"><i><ShieldCheck size={12} /></i><div><b>Capital released</b><p>No active reservation remains</p></div></div><div className="audit-step absent"><i /><div><b>No accepted quote</b><p>No execution price was committed</p></div></div><div className="audit-step absent"><i /><div><b>No ledger transaction</b><p>Owned balances did not change</p></div></div></section></div><div className="terminal-activity"><span className="eyebrow">RECORDED ACTIVITY</span>{activityQuery.isLoading && <p>Loading the stored trail...</p>}{activities.map((activity) => <div key={activity.id}><i /><span><b>{activity.type.replaceAll("_", " ")}</b><p>{activity.message}</p><small>{dateTime(activity.created_at)}</small></span></div>)}{activityQuery.data?.nextCursor && <button className="replay-action no-print" disabled={loadOlder.isPending} onClick={() => loadOlder.mutate(activityQuery.data!.nextCursor!)}>{loadOlder.isPending ? "LOADING..." : "LOAD EARLIER ACTIVITY"}</button>}</div><div className="no-print"><ReceiptActions filename={`ghost-outcome-${ghost.id}.json`} value={exportValue} /></div></div>;
 }
 
-type HistoryOutcome = { key: string; id: string; status: "FILLED" | "BLOCKED" | "CANCELLED" | "EXPIRED" | "FAILED"; name: string; at: string; kind: "receipt" | "attempt" | "outcome"; execution?: Execution; attempt?: ExecutionAttempt; ghost?: GhostRecord };
+type HistoryOutcome = { key: string; id: string; status: "FILLED" | "BLOCKED" | "CANCELLED" | "EXPIRED" | "FAILED"; name: string; at: string; kind: "receipt" | "attempt" | "outcome"; generation?: number; execution?: Execution; attempt?: ExecutionAttempt; ghost?: GhostRecord };
 
 function historyOutcomeStory(outcome: HistoryOutcome) {
   if (outcome.status === "FILLED") return { headline: "Trade settled and balances changed", capital: "Committed to ledger", proof: "Receipt, frame, quote, reservation, ledger" };
@@ -1158,15 +1156,18 @@ function HistoryView({ workspace }: { workspace: Workspace }) {
   const [status, setStatus] = useState<"ALL" | HistoryOutcome["status"]>("ALL");
   const [search, setSearch] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const auditOpener = useRef<HTMLButtonElement | null>(null);
+  const auditDialog = useRef<HTMLDivElement | null>(null);
   const outcomes = useMemo<HistoryOutcome[]>(() => [
     ...workspace.executions.map((execution) => ({ key: `receipt:${execution.id}`, id: execution.id, status: "FILLED" as const, name: execution.ghost_name, at: execution.completed_at, kind: "receipt" as const, execution })),
+    ...(workspace.archivedExecutions ?? []).map((execution) => ({ key: `receipt:${execution.id}`, id: execution.id, status: "FILLED" as const, name: execution.ghost_name, at: execution.completed_at, kind: "receipt" as const, generation: execution.portfolioGeneration, execution })),
     ...workspace.executionAttempts.map((attempt) => ({ key: `attempt:${attempt.id}`, id: attempt.id, status: "BLOCKED" as const, name: attempt.ghostName, at: attempt.updatedAt, kind: "attempt" as const, attempt })),
     ...workspace.ghosts.filter((ghost) => ["CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status)).map((ghost) => ({ key: `outcome:${ghost.id}`, id: ghost.id, status: ghost.status as "CANCELLED" | "EXPIRED" | "FAILED", name: ghost.name, at: ghost.updatedAt, kind: "outcome" as const, ghost })),
-  ].sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime()), [workspace.executionAttempts, workspace.executions, workspace.ghosts]);
+  ].sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime()), [workspace.archivedExecutions, workspace.executionAttempts, workspace.executions, workspace.ghosts]);
   const visible = outcomes.filter((outcome) => (status === "ALL" || outcome.status === status) && `${outcome.name} ${outcome.status}`.toLowerCase().includes(search.trim().toLowerCase()));
   const selected = outcomes.find((outcome) => outcome.key === selectedKey) ?? null;
-  const open = (outcome: HistoryOutcome) => { setSelectedKey(outcome.key); const url = new URL(window.location.href); url.searchParams.set("item", outcome.key); window.history.pushState({}, "", url); };
-  const close = () => { setSelectedKey(null); const url = new URL(window.location.href); url.searchParams.delete("item"); window.history.replaceState({}, "", url); };
+  const open = (outcome: HistoryOutcome, opener?: HTMLButtonElement) => { auditOpener.current = opener ?? null; setSelectedKey(outcome.key); const url = new URL(window.location.href); url.searchParams.set("item", outcome.key); window.history.pushState({}, "", url); };
+  const close = () => { setSelectedKey(null); const url = new URL(window.location.href); url.searchParams.delete("item"); window.history.replaceState({}, "", url); window.setTimeout(() => auditOpener.current?.focus(), 0); };
   useEffect(() => {
     const sync = () => setSelectedKey(new URL(window.location.href).searchParams.get("item"));
     sync();
@@ -1178,15 +1179,31 @@ function HistoryView({ workspace }: { workspace: Workspace }) {
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, [selectedKey]);
-  const settledVolume = workspace.executions.reduce((sum, item) => sum + Number(item.output_asset === "USDC" ? item.output_amount : item.input_amount), 0);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const focusable = () => Array.from(auditDialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", trap);
+    return () => window.removeEventListener("keydown", trap);
+  }, [selectedKey]);
+  const allExecutions = [...workspace.executions, ...(workspace.archivedExecutions ?? [])];
+  const settledVolume = allExecutions.reduce((sum, item) => sum + Number(item.output_asset === "USDC" ? item.output_amount : item.input_amount), 0);
   return <main className="page-view history-audit-page phase-27-history"><div className="page-title"><div><span className="eyebrow">EXECUTION AUDIT TRAIL</span><h1>Trigger history</h1><p>See what happened to every trigger and its capital first, then open the stored evidence behind the result.</p></div><div className="history-total"><span>SIMULATED SETTLED VALUE</span><b>${money.format(settledVolume)}</b><small>{workspace.executions.length} committed settlement{workspace.executions.length === 1 ? "" : "s"} · {workspace.executionAttempts.length} prevented</small></div></div><section className="history-summary" aria-label="History outcome summary">{(["FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button key={item} className={status === item ? "active" : ""} onClick={() => setStatus(status === item ? "ALL" : item)}><span>{item}</span><b>{outcomes.filter((outcome) => outcome.status === item).length}</b><small>{item === "FILLED" ? "ledger committed" : item === "BLOCKED" ? "capital restored" : item === "FAILED" ? "settlement failed" : "no execution"}</small></button>)}</section><section className="history-controls" aria-label="Filter history"><label>Search<input placeholder="Trigger or outcome" value={search} onChange={(event) => setSearch(event.target.value)} /></label><div className="history-status-filter" role="group" aria-label="Outcome filter">{(["ALL", "FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button aria-pressed={status === item} className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)}>{item === "ALL" ? "All outcomes" : item.charAt(0) + item.slice(1).toLowerCase()}</button>)}</div></section>{outcomes.length === 0 ? <div className="empty-state history-empty phase-27-empty"><ClockCounterClockwise size={38} /><h2>No outcomes yet</h2><p>History begins when a trigger settles, is prevented, is stopped, expires, or fails. Every result will keep its evidence here.</p><div className="history-empty-outcomes"><span><Check size={13} />SETTLED</span><span><ShieldCheck size={13} />PREVENTED</span><span><X size={13} />STOPPED</span></div><a href="/trade">RUN A TRIGGER<Play size={15} /></a></div> : visible.length === 0 ? <div className="empty-state history-empty phase-27-empty"><Database size={36} /><h2>No outcomes match</h2><p>Your evidence is still stored. Clear the current filter to return to the complete chronology.</p><button onClick={() => { setStatus("ALL"); setSearch(""); }}>SHOW ALL HISTORY</button></div> : <section className="history-ledger phase-27-ledger" aria-label="Chronological execution ledger"><header><span>OUTCOME</span><span>TRIGGER AND RESULT</span><span>CAPITAL</span><span>STORED PROOF</span><span>EXPAND</span></header>{visible.map((outcome) => {
     const evaluations = outcome.execution ? (outcome.execution.receipt.evaluations ?? []) as Evaluation[] : outcome.attempt ? outcome.attempt.conditions.map((condition) => evaluateCondition(condition, outcome.attempt!.frame.observations[condition.metric].value)) : outcome.ghost?.evaluations ?? [];
     const ready = evaluations.filter((evaluation) => evaluation.satisfied).length;
     const settlement = outcome.execution ? `${quantity.format(Number(outcome.execution.input_amount))} ${outcome.execution.input_asset} → ${quantity.format(Number(outcome.execution.output_amount))} ${outcome.execution.output_asset}` : outcome.status === "BLOCKED" ? "PREVENTED · CAPITAL RESTORED" : outcome.status === "FAILED" ? "FAILED · NO LEDGER COMMIT" : "NOT ATTEMPTED · CAPITAL RELEASED";
     const story = historyOutcomeStory(outcome);
     const evidenceLabel = outcome.kind === "receipt" ? "VIEW RECEIPT" : outcome.kind === "attempt" ? "VIEW ATTEMPT" : "VIEW OUTCOME";
-    return <button className={`history-audit-row outcome-${outcome.status.toLowerCase()}`} aria-expanded={selectedKey === outcome.key} aria-haspopup="dialog" aria-controls="audit-record-dialog" key={outcome.key} onClick={() => open(outcome)}><span className="outcome-mark">{outcome.status === "FILLED" ? <Check size={16} weight="bold" /> : outcome.status === "BLOCKED" ? <ShieldCheck size={17} /> : <X size={16} />}</span><div className="outcome-label"><StatusBadge status={outcome.status} /><small>{dateTime(outcome.at)}</small></div><div className="outcome-story"><span>{outcome.name}</span><b>{story.headline}</b><small>{settlement}</small></div><div className="outcome-capital"><span>CAPITAL RESULT</span><b>{story.capital}</b><small>{ready}/{evaluations.length} conditions stored</small></div><div className="outcome-proof"><span>STORED PROOF</span><b>{story.proof}</b><small>Identifiers available inside</small></div><div className="outcome-evidence"><span>EXPAND EVIDENCE</span><b>{evidenceLabel}</b><CaretRight size={17} /></div></button>;
-  })}</section>}<AnimatePresence>{selected && <motion.div className="modal-backdrop audit-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><motion.div id="audit-record-dialog" className="receipt-modal audit-modal" role="dialog" aria-modal="true" aria-label={`${selected.name} ${selected.status.toLowerCase()} audit record`} initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 40, opacity: 0 }} onClick={(event) => event.stopPropagation()}>{selected.execution ? <Receipt execution={selected.execution} close={close} /> : selected.attempt ? <BlockedAudit attempt={selected.attempt} close={close} /> : selected.ghost ? <TerminalAudit ghost={selected.ghost} close={close} /> : null}</motion.div></motion.div>}</AnimatePresence></main>;
+    return <button className={`history-audit-row outcome-${outcome.status.toLowerCase()}`} aria-expanded={selectedKey === outcome.key} aria-haspopup="dialog" aria-controls="audit-record-dialog" key={outcome.key} onClick={(event) => open(outcome, event.currentTarget)}><span className="outcome-mark">{outcome.status === "FILLED" ? <Check size={16} weight="bold" /> : outcome.status === "BLOCKED" ? <ShieldCheck size={17} /> : <X size={16} />}</span><div className="outcome-label"><StatusBadge status={outcome.status} /><time dateTime={outcome.at}>{dateTime(outcome.at)}</time></div><div className="outcome-story"><span>{outcome.name}</span><b>{story.headline}</b><small>{settlement}{outcome.generation ? ` · ARCHIVED ACCOUNT ${outcome.generation}` : ""}</small></div><div className="outcome-capital"><span>CAPITAL RESULT</span><b>{story.capital}</b><small>{ready}/{evaluations.length} conditions stored</small></div><div className="outcome-proof"><span>STORED PROOF</span><b>{story.proof}</b><small>Identifiers available inside</small></div><div className="outcome-evidence"><span>EXPAND EVIDENCE</span><b>{evidenceLabel}</b><CaretRight size={17} /></div></button>;
+  })}</section>}<AnimatePresence>{selected && <motion.div className="modal-backdrop audit-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><motion.div ref={auditDialog} id="audit-record-dialog" className="receipt-modal audit-modal" role="dialog" aria-modal="true" aria-label={`${selected.name} ${selected.status.toLowerCase()} audit record`} initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 40, opacity: 0 }} onClick={(event) => event.stopPropagation()}>{selected.execution ? <Receipt execution={selected.execution} close={close} /> : selected.attempt ? <BlockedAudit attempt={selected.attempt} close={close} /> : selected.ghost ? <TerminalAudit ghost={selected.ghost} close={close} /> : null}</motion.div></motion.div>}</AnimatePresence></main>;
 }
 
 function DetailView({ workspace, ghostId }: { workspace: Workspace; ghostId: string }) {

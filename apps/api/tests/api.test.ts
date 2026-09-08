@@ -506,6 +506,30 @@ describe("Ghost API", () => {
     expect(after.executions).toHaveLength(0);
   });
 
+  it("keeps archived generation receipts available without mixing them into current balances", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = (await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: isolatedCookie },
+      payload: { ...sellDraft("Archived receipt"), conditions: [{ metric: "PRICE", operator: "LTE", target: "1000" }] },
+    })).json();
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.id}/arm`, headers: mutationHeaders(isolatedCookie) });
+    await app.inject({ method: "POST", url: "/api/demo/step", headers: { cookie: isolatedCookie } });
+    const settled = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    expect(settled.executions).toHaveLength(1);
+
+    await app.inject({ method: "POST", url: "/api/portfolio/reset", headers: mutationHeaders(isolatedCookie) });
+    const current = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    expect(current.executions).toHaveLength(0);
+    expect(current.archivedExecutions).toHaveLength(1);
+    expect(current.archivedExecutions[0]).toMatchObject({ ghost_name: "Archived receipt", portfolioGeneration: 1 });
+    expect(Number(current.portfolio.balances.SOL.quantity)).toBe(40);
+    expect(Number(current.portfolio.balances.USDC.quantity)).toBe(15000);
+  });
+
   it("reports clean portfolio-generation integrity", async () => {
     const response = await app.inject({ method: "GET", url: "/health/integrity" });
     expect(response.statusCode).toBe(200);

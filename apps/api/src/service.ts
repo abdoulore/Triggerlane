@@ -865,6 +865,16 @@ export class GhostService {
       "SELECT e.*, g.name AS ghost_name FROM executions e JOIN ghosts g ON g.id = e.ghost_id WHERE e.portfolio_id = $1 ORDER BY e.completed_at DESC",
       [portfolio.id],
     );
+    const archivedExecutionRows = await rows<Record<string, unknown>>(
+      this.database,
+      `SELECT e.*, g.name AS ghost_name, p.generation AS portfolio_generation
+       FROM executions e
+       JOIN ghosts g ON g.id = e.ghost_id
+       JOIN portfolios p ON p.id = e.portfolio_id
+       WHERE p.user_id = $1 AND p.status = 'ARCHIVED'
+       ORDER BY e.completed_at DESC`,
+      [userId],
+    );
     const attemptRows = await rows<Record<string, unknown>>(
       this.database,
       `SELECT ea.id, ea.ghost_id, ea.configuration_version, ea.trigger_frame_id, ea.status, ea.created_at, ea.updated_at,
@@ -939,6 +949,7 @@ export class GhostService {
       identity: { id: userId, label: `Account ${userId.slice(0, 4).toUpperCase()}` },
       portfolio: {
         id: portfolio.id,
+        generation: portfolio.generation,
         dataMode: portfolio.data_mode,
         demoStep: portfolio.demo_step,
         version: portfolio.version,
@@ -953,6 +964,12 @@ export class GhostService {
       })),
       executions: executionRows.map((execution) => ({
         ...execution,
+        receipt: parseJson(execution.receipt as JsonValue),
+        completed_at: new Date(execution.completed_at as string).toISOString(),
+      })),
+      archivedExecutions: archivedExecutionRows.map((execution) => ({
+        ...execution,
+        portfolioGeneration: execution.portfolio_generation,
         receipt: parseJson(execution.receipt as JsonValue),
         completed_at: new Date(execution.completed_at as string).toISOString(),
       })),
