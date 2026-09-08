@@ -34,7 +34,7 @@ import {
 } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { evaluateCondition, formatMetric, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { API_URL, ApiError, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
@@ -769,12 +769,22 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [mobileComposer, setMobileComposer] = useState(false);
   const [marketDetailsOpen, setMarketDetailsOpen] = useState(false);
+  const composerTriggerRef = useRef<HTMLButtonElement>(null);
+  const composerCloseRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 680px)");
+    const sync = () => setMobileComposer(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   useEffect(() => {
     if (!composerOpen) return;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setComposerOpen(false);
+      if (event.key === "Escape") { setComposerOpen(false); composerTriggerRef.current?.focus(); }
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
@@ -783,6 +793,7 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [composerOpen]);
+  useEffect(() => { if (mobileComposer && composerOpen) composerCloseRef.current?.focus(); }, [composerOpen, mobileComposer]);
   const selected = workspace.ghosts.find((ghost) => ghost.id === selectedId) ?? workspace.ghosts.find((ghost) => ["WATCHING", "PAUSED", "DRAFT"].includes(ghost.status)) ?? workspace.ghosts[0];
   const modeIsLive = workspace.portfolio.dataMode === "LIVE";
   const sol = workspace.portfolio.balances.SOL;
@@ -838,31 +849,32 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
         {!modeIsLive && <FeedControls workspace={workspace} step={() => step.mutate()} stepping={step.isPending} />}
         <AnimatePresence>{selected?.status === "FILLED" && <motion.div className="execution-flash" role="status" initial={{ opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span><Check size={24} weight="bold" /></span><div><b>TRIGGER FILLED</b><small>Virtual settlement committed exactly once</small></div></motion.div>}</AnimatePresence>
       </main>
-      <button className="mobile-compose-trigger" aria-expanded={composerOpen} aria-controls="trigger-composer-sheet" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
-      <div id="trigger-composer-sheet" className={`composer-shell ${composerOpen ? "open" : ""}`}><button className="composer-sheet-close" title="Close Composer" onClick={() => setComposerOpen(false)}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
+      <button ref={composerTriggerRef} className="mobile-compose-trigger" aria-expanded={composerOpen} aria-controls="trigger-composer-sheet" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
+      <div id="trigger-composer-sheet" className={`composer-shell ${composerOpen ? "open" : ""}`} aria-hidden={mobileComposer && !composerOpen} inert={mobileComposer && !composerOpen ? true : undefined}><button ref={composerCloseRef} className="composer-sheet-close" title="Close Composer" onClick={() => { setComposerOpen(false); composerTriggerRef.current?.focus(); }}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
     </div>
   );
 }
 
-function GhostActions({ ghost }: { ghost: GhostRecord }) {
+function GhostActions({ ghost, context = "row" }: { ghost: GhostRecord; context?: "row" | "detail" }) {
   const queryClient = useQueryClient();
   const mutate = useMutation({
     mutationFn: (action: "pause" | "resume" | "cancel" | "arm") => api(`/api/ghosts/${ghost.id}/${action}`, { method: "POST" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["workspace"] });
       void queryClient.invalidateQueries({ queryKey: ["ghost", ghost.id] });
+      void queryClient.invalidateQueries({ queryKey: ["ghost-activity", ghost.id] });
     },
   });
   const terminal = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status);
   const pending = mutate.isPending;
   const error = mutate.error instanceof Error ? mutate.error.message : null;
   return (
-    <div className="ghost-action-wrap">
+    <div className={`ghost-action-wrap ${context === "detail" ? "detail-actions" : ""}`}>
       <div className="row-actions">
-        <button aria-label={ghost.status === "DRAFT" ? "Start trigger" : `Start unavailable while ${ghost.status.toLowerCase()}`} title={ghost.status === "DRAFT" ? "Start Trigger" : `Start unavailable while status is ${ghost.status}`} disabled={ghost.status !== "DRAFT" || pending} onClick={() => mutate.mutate("arm")}><Lightning size={17} /></button>
-        {ghost.status === "PAUSED" ? <button aria-label="Resume trigger" title="Resume Trigger" disabled={pending} onClick={() => mutate.mutate("resume")}><Play size={17} /></button> : <button aria-label={ghost.status === "WATCHING" ? "Pause trigger" : `Pause unavailable while ${ghost.status.toLowerCase()}`} title={ghost.status === "WATCHING" ? "Pause Trigger" : `Pause unavailable while status is ${ghost.status}`} disabled={ghost.status !== "WATCHING" || pending} onClick={() => mutate.mutate("pause")}><Pause size={17} /></button>}
-        <button aria-label={terminal ? `Cancel unavailable while ${ghost.status.toLowerCase()}` : "Cancel trigger"} title={terminal ? `Cancel unavailable while status is ${ghost.status}` : "Cancel Trigger"} disabled={terminal || pending} onClick={() => mutate.mutate("cancel")}><X size={17} /></button>
-        <a aria-label={`Open ${ghost.name}`} title="Open Trigger" href={`/ghost/${ghost.id}`}><ArrowRight size={17} /></a>
+        <button aria-label="Start trigger" title={ghost.status === "DRAFT" ? "Start Trigger" : `Start unavailable while status is ${ghost.status}`} disabled={ghost.status !== "DRAFT" || pending} onClick={() => mutate.mutate("arm")}><Lightning size={17} />{context === "detail" && <span>START</span>}</button>
+        {ghost.status === "PAUSED" ? <button aria-label="Resume trigger" title="Resume Trigger" disabled={pending} onClick={() => mutate.mutate("resume")}><Play size={17} />{context === "detail" && <span>RESUME</span>}</button> : <button aria-label="Pause trigger" title={ghost.status === "WATCHING" ? "Pause Trigger" : `Pause unavailable while status is ${ghost.status}`} disabled={ghost.status !== "WATCHING" || pending} onClick={() => mutate.mutate("pause")}><Pause size={17} />{context === "detail" && <span>PAUSE</span>}</button>}
+        <button aria-label="Cancel trigger" title={terminal ? `Cancel unavailable while status is ${ghost.status}` : "Cancel Trigger"} disabled={terminal || pending} onClick={() => mutate.mutate("cancel")}><X size={17} />{context === "detail" && <span>CANCEL</span>}</button>
+        {context === "row" && <a aria-label={`Open ${ghost.name}`} title="Open Trigger" href={`/ghost/${ghost.id}`}><ArrowRight size={17} /></a>}
       </div>
       {error && <small className="row-action-error" role="alert">{error}</small>}
     </div>
@@ -1226,6 +1238,11 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
     <main className={`detail-page phase-26-detail detail-state-${stateSummary.tone}`}>
       <div className="detail-title"><div><a href="/ghosts">TRIGGERS</a><span>/</span><span>CURRENT STATUS</span></div><div className="detail-heading"><span className="large-ghost"><BrandIcon size={31} weight="duotone" /></span><div><span className="eyebrow">ONE-SHOT {ghost.side} INTENT</span><h1>{ghost.name}</h1></div><StatusBadge status={ghost.status} /></div></div>
 
+      <section className="detail-action-bar" aria-label="Trigger controls">
+        <div><span className="eyebrow">AVAILABLE NOW</span><p>{["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "This trigger is complete. Its stored evidence remains available below." : ghost.status === "DRAFT" ? "Start monitoring when the terms and capital commitment are ready." : ghost.status === "PAUSED" ? "Resume monitoring or cancel and release the reservation." : "Pause monitoring or cancel and release the reservation."}</p></div>
+        <GhostActions ghost={ghost} context="detail" />
+      </section>
+
       <section className={`detail-observatory ${dataPaused ? "data-blocked" : ""}`} aria-labelledby="ghost-core-heading">
         <aside className="observatory-brief">
           <div className="detail-current-answer"><span>{stateSummary.label}</span><h2 id="ghost-core-heading">{coreHeadline}</h2><p>{coreMessage}</p><small>{stateSummary.reason}</small></div>
@@ -1302,11 +1319,17 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   const [accountOpen, setAccountOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [marketInterval, setMarketInterval] = useState<"1m" | "5m" | "1h">("5m");
+  const environmentButtonRef = useRef<HTMLButtonElement>(null);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const environmentDialogRef = useRef<HTMLDivElement>(null);
+  const accountDialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api("/api/session/anonymous", { method: "POST", body: JSON.stringify({ initialMode: "LIVE" }) }).then(() => setSessionReady(true)).catch((error) => setBootError(error instanceof Error ? error.message : "Paper account could not start."));
+    api<{ expiresAt: string }>("/api/session/anonymous", { method: "POST", body: JSON.stringify({ initialMode: "LIVE" }) }).then((session) => { setSessionExpiresAt(session.expiresAt); setSessionReady(true); }).catch((error) => setBootError(error instanceof Error ? error.message : "Paper account could not start."));
   }, []);
   const workspaceQuery = useQuery({ queryKey: ["workspace"], queryFn: () => api<Workspace>("/api/workspace"), enabled: sessionReady });
   const workspace = workspaceQuery.data;
@@ -1372,10 +1395,33 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
   }, [queryClient, sessionReady]);
 
   useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setConnectionsOpen(false); setAccountOpen(false); setOnboardingOpen(false); } };
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { if (onboardingOpen) accountButtonRef.current?.focus(); else if (accountOpen) accountButtonRef.current?.focus(); else if (connectionsOpen) environmentButtonRef.current?.focus(); setConnectionsOpen(false); setAccountOpen(false); setOnboardingOpen(false); setClearConfirmationOpen(false); } };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, []);
+  }, [accountOpen, connectionsOpen, onboardingOpen]);
+
+  useEffect(() => {
+    if (connectionsOpen) environmentDialogRef.current?.focus();
+    if (accountOpen) accountDialogRef.current?.focus();
+  }, [accountOpen, connectionsOpen]);
+
+  useEffect(() => {
+    if (!onboardingOpen) return;
+    const panel = document.querySelector<HTMLElement>("#onboarding-panel");
+    const focusable = () => Array.from(panel?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    focusable()[0]?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0]!;
+      const last = items.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", trap);
+    return () => window.removeEventListener("keydown", trap);
+  }, [onboardingOpen]);
 
   const setMode = useMutation({ mutationFn: (mode: "DEMO" | "LIVE") => api<Workspace>("/api/data-mode", { method: "POST", body: JSON.stringify({ mode }) }), onSuccess: (data) => { queryClient.setQueryData(["workspace"], data); void queryClient.invalidateQueries({ queryKey: ["market-view"] }); } });
   const clearSession = useMutation({ mutationFn: () => api("/api/session", { method: "DELETE" }), onSuccess: () => window.location.reload() });
@@ -1398,27 +1444,28 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
         <Logo />
         <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers<span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length || ""}</span></a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
         <div className="header-tools">
-          <button className="environment-button" aria-label="Open paper trading settings" aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setOnboardingOpen(false); }}><i /><span>PAPER TRADING</span><CaretRight size={14} /></button>
-          <button className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>
+          <button ref={environmentButtonRef} className="environment-button" aria-label="Open paper trading settings" aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><i /><span>PAPER TRADING</span><CaretRight size={14} /></button>
+          <button ref={accountButtonRef} className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>
         </div>
       </header>
-      <AnimatePresence>{(connectionsOpen || accountOpen) && <motion.button className="menu-backdrop" aria-label="Close open menu" onClick={() => { setConnectionsOpen(false); setAccountOpen(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
-      <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => setOnboardingOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view} close={() => setOnboardingOpen(false)} /></>}</AnimatePresence>
-      <AnimatePresence>{connectionsOpen && <motion.div id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Paper trading settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+      <AnimatePresence>{(connectionsOpen || accountOpen) && <motion.button className="menu-backdrop" aria-label="Close open menu" onClick={() => { if (accountOpen) accountButtonRef.current?.focus(); if (connectionsOpen) environmentButtonRef.current?.focus(); setConnectionsOpen(false); setAccountOpen(false); setClearConfirmationOpen(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
+      <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view} close={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} /></>}</AnimatePresence>
+      <AnimatePresence>{connectionsOpen && <motion.div ref={environmentDialogRef} tabIndex={-1} id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Paper trading settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
         <div className="simulation-menu-heading"><div><span className="eyebrow">PAPER ACCOUNT</span><strong>{modeIsLive ? "Live market execution" : "Guided Scenario"}</strong></div><span className="eligible">VIRTUAL EXECUTION</span></div>
         <div className="simulation-warning paper-market-status"><Broadcast size={16} /><span><b>{modeIsLive ? "Live market data" : "Deterministic lesson"}</b><small>{modeIsLive ? "Fresh Hyperliquid observations can trigger virtual trades." : "Stored steps let you learn and replay trigger behavior."}</small></span></div>
-        {!modeIsLive && <button className="guided-live-action" onClick={() => setMode.mutate("LIVE")} disabled={setMode.isPending}><Broadcast size={15} />{setMode.isPending ? "CONNECTING..." : "USE LIVE MARKET DATA"}</button>}
+        <div className="simulation-mode-switch" role="group" aria-label="Market data mode"><button className={!modeIsLive ? "active" : ""} aria-pressed={!modeIsLive} disabled={setMode.isPending || !modeIsLive} onClick={() => setMode.mutate("DEMO")}>GUIDED</button><button className={modeIsLive ? "active" : ""} aria-pressed={modeIsLive} disabled={setMode.isPending || modeIsLive} onClick={() => setMode.mutate("LIVE")}>{setMode.isPending ? "SWITCHING..." : "LIVE DATA"}</button></div>
+        {setMode.error && <div className="inline-error menu-action-error" role="alert"><Warning size={15} /><span><b>Mode did not change</b><small>{setMode.error instanceof Error ? setMode.error.message : "Try again."}</small></span></div>}
         <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Execution</dt><dd>VIRTUAL</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
         <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>VIRTUAL · AVAILABLE</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
       </motion.div>}</AnimatePresence>
-      <AnimatePresence>{accountOpen && <motion.div id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button><button className="account-danger" onClick={() => clearSession.mutate()}><Power size={16} />CLEAR SESSION</button></motion.div>}</AnimatePresence>
+      <AnimatePresence>{accountOpen && <motion.div ref={accountDialogRef} tabIndex={-1} id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">BROWSER-BOUND ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><p className="account-boundary">This account is available only in this browser. There is no sign-in or recovery if its access cookie is removed.</p><dl className="account-access"><div><dt>ACCESS EXPIRES</dt><dd>{sessionExpiresAt ? dateTime(sessionExpiresAt) : "UNKNOWN"}</dd></div><div><dt>DATA STORAGE</dt><dd>SERVER STORED</dd></div></dl><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button>{!clearConfirmationOpen ? <button className="account-danger" onClick={() => setClearConfirmationOpen(true)}><Power size={16} />CLEAR BROWSER ACCESS</button> : <div className="account-clear-confirm" role="alert"><b>End access from this browser?</b><p>Your stored paper data will not be deleted, but this browser cannot recover or reopen it afterward.</p><div><button onClick={() => setClearConfirmationOpen(false)}>KEEP ACCESS</button><button className="account-danger" disabled={clearSession.isPending} onClick={() => clearSession.mutate()}>{clearSession.isPending ? "CLEARING..." : "END ACCESS"}</button></div>{clearSession.error && <small role="alert">{clearSession.error instanceof Error ? clearSession.error.message : "Access could not be cleared."}</small>}</div>}</motion.div>}</AnimatePresence>
       {view === "trade" && <TradeView workspace={workspace} market={market} marketLoading={marketQuery.isPending || marketQuery.isFetching && !market} interval={marketInterval} onInterval={setMarketInterval} capabilities={capabilities} />}
       {view === "ghosts" && <GhostsView workspace={workspace} />}
       {view === "portfolio" && <PortfolioView workspace={workspace} market={market} />}
       {view === "history" && <HistoryView workspace={workspace} />}
       {view === "discover" && <DiscoverView workspace={workspace} />}
       {view === "detail" && ghostId && <DetailView workspace={workspace} ghostId={ghostId} />}
-      <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio"><Pulse size={18} />Portfolio</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Discover</a><button onClick={() => { setAccountOpen(true); setConnectionsOpen(false); }}><UserCircle size={18} />Account</button></nav>
+      <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio"><Pulse size={18} />Portfolio</a><a className={view === "history" ? "active" : ""} href="/history"><ClockCounterClockwise size={18} />History</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Discover</a></nav>
       <SandboxDisclaimer />
       <footer className="system-footer"><span><i className="green" />{modeIsLive ? "LIVE DATA · VIRTUAL EXECUTION" : "GUIDED SCENARIO · ISOLATED"}</span><span>SOL-PERP/USDC</span><span>SNAPSHOT {market?.snapshotId?.slice(0, 8) ?? "PENDING"}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
     </AppShell>

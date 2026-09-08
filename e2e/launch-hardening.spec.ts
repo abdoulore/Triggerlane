@@ -215,7 +215,7 @@ test("phase 30 keeps navigation calm and market detail progressive", async ({ pa
   const simulation = page.getByRole("dialog", { name: "Paper trading settings" });
   await expect(simulation).toBeVisible();
   await expect(simulation.getByText("VIRTUAL EXECUTION", { exact: true })).toBeVisible();
-  await expect(simulation.getByRole("button", { name: "USE LIVE MARKET DATA" })).toBeVisible();
+  await expect(simulation.getByRole("button", { name: "LIVE DATA" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("simulation-menu-desktop.png"), animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(simulation).toBeHidden();
@@ -223,7 +223,7 @@ test("phase 30 keeps navigation calm and market detail progressive", async ({ pa
   await page.getByRole("button", { name: "Open account" }).click();
   const account = page.getByRole("dialog", { name: "Account" });
   await expect(account).toBeVisible();
-  await expect(account.getByText("ACCOUNT", { exact: true })).toBeVisible();
+  await expect(account.getByText("BROWSER-BOUND ACCOUNT", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("account-menu-desktop.png"), animations: "disabled" });
   await account.getByRole("button", { name: "NEW HERE?" }).click();
   await expect(page.getByRole("dialog", { name: "Build one clear trigger" })).toBeVisible();

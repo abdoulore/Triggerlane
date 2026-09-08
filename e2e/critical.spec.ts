@@ -298,7 +298,7 @@ test("Ghost Detail has a complete no-WebGL fallback", async ({ page }) => {
 test("Live Data remains available for virtual execution", async ({ page }) => {
   await page.goto("/trade");
   await page.getByRole("button", { name: "Open paper trading settings" }).click();
-  await page.getByRole("dialog", { name: "Paper trading settings" }).getByRole("button", { name: "USE LIVE MARKET DATA" }).click();
+  await page.getByRole("dialog", { name: "Paper trading settings" }).getByRole("button", { name: "LIVE DATA" }).click();
   await expect(page.getByText("LIVE DATA · VIRTUAL EXECUTION")).toBeVisible();
   await expect(page.getByRole("button", { name: "ADVANCE SCENARIO" })).toBeHidden();
 });
@@ -815,6 +815,42 @@ test("Paper trading menu reports real system capability and closes with Escape",
   expect(serious).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
+});
+
+test("mobile navigation exposes all five product pages while Account remains in the header", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/trade");
+  const nav = page.getByRole("navigation", { name: "Mobile navigation" });
+  for (const label of ["Trade", "Triggers", "Portfolio", "History", "Discover"]) await expect(nav.getByText(label, { exact: true })).toBeVisible();
+  await expect(nav.getByText("Account", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open account" }).click();
+  await expect(page.getByRole("dialog", { name: "Account" })).toBeVisible();
+});
+
+test("browser-bound Account explains access and requires confirmation before clearing", async ({ page }) => {
+  await page.goto("/trade");
+  const trigger = page.getByRole("button", { name: "Open account" });
+  await trigger.click();
+  const account = page.getByRole("dialog", { name: "Account" });
+  await expect(account.getByText("This account is available only in this browser.", { exact: false })).toBeVisible();
+  await expect(account.getByText("ACCESS EXPIRES", { exact: true })).toBeVisible();
+  await account.getByRole("button", { name: "CLEAR BROWSER ACCESS" }).click();
+  await expect(account.getByText("End access from this browser?", { exact: true })).toBeVisible();
+  await expect(account.getByRole("button", { name: "END ACCESS" })).toBeVisible();
+  await account.getByRole("button", { name: "KEEP ACCESS" }).click();
+  await expect(account.getByRole("button", { name: "CLEAR BROWSER ACCESS" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
+test("Trigger Detail exposes guarded lifecycle actions", async ({ page }) => {
+  await openWatchingGhostDetail(page);
+  const controls = page.getByRole("region", { name: "Trigger controls" });
+  await expect(controls.getByRole("button", { name: "Pause trigger" })).toBeEnabled();
+  await controls.getByRole("button", { name: "Pause trigger" }).click();
+  await expect(controls.getByRole("button", { name: "Resume trigger" })).toBeEnabled();
+  await controls.getByRole("button", { name: "Resume trigger" }).click();
+  await expect(controls.getByRole("button", { name: "Pause trigger" })).toBeEnabled();
 });
 
 test("mobile prioritizes monitoring and keeps Composer inside common phone widths", async ({ page }, testInfo) => {
