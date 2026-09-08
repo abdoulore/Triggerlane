@@ -65,6 +65,7 @@ interface Evaluation {
   current: string;
   satisfied: boolean;
   distanceRatio: string;
+  evidence?: { frameId: string; observationId: string; provider: string; sourceTimestamp: string | null; receivedAt: string; provenance: "DEMO" | "LIVE" };
 }
 
 interface GhostRecord {
@@ -77,6 +78,8 @@ interface GhostRecord {
   expiresAt: string;
   conditions: GhostDraft["conditions"];
   evaluations: Evaluation[];
+  configurationVersion: number;
+  evaluationFrame?: Frame | null;
   status: string;
   pauseReason: string | null;
   triggerProximity: string;
@@ -116,6 +119,8 @@ interface Activity {
   metadata: Record<string, unknown>;
   created_at: string;
 }
+
+interface ActivityPage { items: Activity[]; nextCursor: string | null }
 
 interface Execution {
   id: string;
@@ -414,7 +419,7 @@ function ConditionStrip({ evaluations, frame }: { evaluations: Evaluation[]; fra
             <div className="condition-target"><small>TARGET</small><span>{evaluation.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(evaluation.metric, evaluation.target)}</span></div>
           </div>
           <div className="condition-track"><span style={{ width: evaluation.satisfied ? "100%" : `${Math.max(12, 100 - Number(evaluation.distanceRatio) * 100)}%` }} /></div>
-          <small>{providerLabel(frame.observations[evaluation.metric].provider)} · {dateTime(frame.observations[evaluation.metric].sourceTimestamp ?? frame.observations[evaluation.metric].receivedAt)}</small>
+          <small>{providerLabel(evaluation.evidence?.provider ?? frame.observations[evaluation.metric].provider)} · {dateTime(evaluation.evidence?.sourceTimestamp ?? evaluation.evidence?.receivedAt ?? frame.observations[evaluation.metric].sourceTimestamp ?? frame.observations[evaluation.metric].receivedAt)}</small>
         </motion.div>
       ))}
     </div>
@@ -624,17 +629,17 @@ function AiComposer({ baseDraft, onApply }: { baseDraft: GhostDraft; onApply: (r
   return <div className="ai-composer">
     <label className="field-label" htmlFor="ghost-prompt">Describe your trigger</label>
     <textarea id="ghost-prompt" value={prompt} onChange={(event) => { setPrompt(event.target.value); setResult(null); }} maxLength={600} />
-    <div className="ai-prompt-foot"><span>{prompt.length}/600</span><small>Supports SOL price, funding, position P&amp;L, amount, slippage, and expiry.</small></div>
+    <div className="ai-prompt-foot"><span>{prompt.length}/600</span><small>Deterministic input supports SOL price, funding, position P&amp;L, amount, slippage, and expiry.</small></div>
     {compose.error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{compose.error instanceof Error ? compose.error.message : "Triggerlane could not interpret that request."}</b><small>No draft was changed. Edit the request and generate again.</small></div></div>}
     {!result && <button className="primary-action" onClick={() => compose.mutate()} disabled={compose.isPending || prompt.trim().length < 12}>{compose.isPending ? "GENERATING..." : "GENERATE TRIGGER"}<Sparkle size={17} weight="fill" /></button>}
     {result && <div className="ai-review">
       <div className="ai-review-head"><span className="eyebrow">STRUCTURED PROPOSAL</span><b>{result.draft.name}</b><small>{result.draft.side} · {result.draft.side === "SELL" ? `${result.draft.amount}% POSITION` : `${result.draft.amount} USDC`}</small></div>
       <div className="ai-interpretation">{result.interpretation.map((item) => <div key={item}><Check size={13} />{item}</div>)}</div>
-      {result.unsupported.length > 0 && <div className="ai-warning"><Warning size={16} /><div><b>Not available yet</b><p>{result.unsupported.join(", ")} were omitted. Supported conditions remain editable.</p></div></div>}
+      {result.blockingIssues.length > 0 && <div className="ai-warning" role="alert"><Warning size={16} /><div><b>Clarify before applying</b>{result.blockingIssues.map((issue) => <p key={issue}>{issue}</p>)}</div></div>}
       {result.retained.length > 0 && <details><summary>Retained Composer values ({result.retained.length})</summary>{result.retained.map((item) => <p key={item}>{item}</p>)}</details>}
       <div className="ai-insights"><span className="eyebrow">TRIGGER REVIEW</span>{result.insights.map((insight) => <article key={insight.title}><b>{insight.title}</b><p>{insight.message}</p><span>{insight.action}</span></article>)}</div>
       <p className="ai-disclaimer">{result.disclaimer}</p>
-      <button className="primary-action" onClick={() => onApply(result)}>APPLY TO COMPOSER<ArrowRight size={17} /></button>
+      <button className="primary-action" disabled={!result.canApply} onClick={() => onApply(result)}>APPLY TO COMPOSER<ArrowRight size={17} /></button>
       <button className="replay-action" onClick={() => setResult(null)}>EDIT REQUEST</button>
     </div>}
   </div>;
@@ -1096,10 +1101,18 @@ function BlockedAudit({ attempt, close }: { attempt: ExecutionAttempt; close: ()
   return <div className="receipt blocked-audit printable-audit"><div className="receipt-header"><div><span className="receipt-seal blocked"><Warning size={22} weight="fill" /></span><div><span className="eyebrow">BLOCKED ATTEMPT RECORD</span><h2>{attempt.ghostName}</h2></div></div><button autoFocus className="icon-button no-print" title="Close audit record" onClick={close}><X size={18} /></button></div><div className="blocked-hero"><span>NO EXECUTION</span><h3>Conditions qualified. Settlement was prevented.</h3><p>{attempt.reason?.message ?? "The attempt did not pass the execution boundary."}</p></div><div className="audit-timelines"><section><span className="eyebrow">CONDITION TIMELINE</span>{evaluations.map((evaluation) => <div className="audit-step complete" key={evaluation.metric}><i><Check size={11} weight="bold" /></i><div><b>{evaluation.metric} qualified</b><p>{formatMetric(evaluation.metric, evaluation.current)} {evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</p></div></div>)}</section><section><span className="eyebrow">SETTLEMENT TIMELINE</span><div className="audit-step complete"><i><Check size={11} /></i><div><b>Frame locked</b><p>{attempt.frame.id.slice(0, 12)}</p></div></div><div className="audit-step blocked"><i><X size={11} /></i><div><b>Quote rejected</b><p>{quote?.modeledSlippageBps ?? "Modeled"} bps versus {attempt.maxSlippageBps} bps maximum</p></div></div><div className="audit-step restored"><i><ShieldCheck size={12} /></i><div><b>Capital restored</b><p>{attempt.reservation?.status ?? "ACTIVE"} reservation</p></div></div><div className="audit-step absent"><i /><div><b>No ledger transaction</b><p>Owned balances did not change</p></div></div></section></div><div className="receipt-grid"><div><span>Frame</span><b>{attempt.frame.id}</b></div><div><span>Frame provenance</span><b>{attempt.frame.mode} · {attempt.frame.completeness}</b></div><div><span>Quote model</span><b>{quote?.modelVersion ?? "RECORDED IN ACTIVITY"}</b></div><div><span>Reservation</span><b>{attempt.reservation?.id ?? "NONE"}</b></div><div className="receipt-grid-wide"><span>Ledger transaction</span><b>NOT CREATED</b></div></div><div className="no-print"><ReceiptActions filename={`ghost-blocked-attempt-${attempt.id}.json`} value={exportValue} /></div></div>;
 }
 
-function TerminalAudit({ ghost, activities, close }: { ghost: GhostRecord; activities: Activity[]; close: () => void }) {
+function TerminalAudit({ ghost, close }: { ghost: GhostRecord; close: () => void }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["ghost-activity", ghost.id] as const;
+  const activityQuery = useQuery({ queryKey, queryFn: () => api<ActivityPage>(`/api/ghosts/${ghost.id}/activity?limit=40`) });
+  const loadOlder = useMutation({
+    mutationFn: (cursor: string) => api<ActivityPage>(`/api/ghosts/${ghost.id}/activity?limit=40&cursor=${encodeURIComponent(cursor)}`),
+    onSuccess: (page) => queryClient.setQueryData<ActivityPage>(queryKey, (current) => ({ items: [...(current?.items ?? []), ...page.items], nextCursor: page.nextCursor })),
+  });
+  const activities = activityQuery.data?.items ?? [];
   const explanation = ghost.status === "CANCELLED" ? "The user stopped monitoring before an execution committed." : ghost.status === "EXPIRED" ? "The deadline passed before a qualifying execution completed." : "The execution path ended without a committed settlement.";
   const exportValue = { outcome: ghost.status, ghost, activities };
-  return <div className={`receipt terminal-audit outcome-${ghost.status.toLowerCase()} printable-audit`}><div className="receipt-header"><div><span className="receipt-seal terminal"><X size={22} /></span><div><span className="eyebrow">TERMINAL OUTCOME RECORD</span><h2>{ghost.name}</h2></div></div><button autoFocus className="icon-button no-print" title="Close audit record" onClick={close}><X size={18} /></button></div><div className="blocked-hero"><span>{ghost.status === "FAILED" ? "EXECUTION FAILED" : "NO EXECUTION"}</span><h3>{ghost.status.replaceAll("_", " ")}</h3><p>{explanation}</p></div><div className="audit-timelines"><section><span className="eyebrow">LAST CONDITION STATE</span>{ghost.evaluations.map((evaluation) => <div className={`audit-step ${evaluation.satisfied ? "complete" : "absent"}`} key={evaluation.metric}><i>{evaluation.satisfied && <Check size={11} />}</i><div><b>{evaluation.metric} {evaluation.satisfied ? "ready" : "not ready"}</b><p>{formatMetric(evaluation.metric, evaluation.current)} {evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</p></div></div>)}</section><section><span className="eyebrow">SETTLEMENT TIMELINE</span><div className="audit-step blocked"><i><X size={11} /></i><div><b>Monitoring ended</b><p>{dateTime(ghost.updatedAt)}</p></div></div><div className="audit-step restored"><i><ShieldCheck size={12} /></i><div><b>Capital released</b><p>No active reservation remains</p></div></div><div className="audit-step absent"><i /><div><b>No accepted quote</b><p>No execution price was committed</p></div></div><div className="audit-step absent"><i /><div><b>No ledger transaction</b><p>Owned balances did not change</p></div></div></section></div><div className="terminal-activity"><span className="eyebrow">RECORDED ACTIVITY</span>{activities.map((activity) => <div key={activity.id}><i /><span><b>{activity.type.replaceAll("_", " ")}</b><p>{activity.message}</p><small>{dateTime(activity.created_at)}</small></span></div>)}</div><div className="no-print"><ReceiptActions filename={`ghost-outcome-${ghost.id}.json`} value={exportValue} /></div></div>;
+  return <div className={`receipt terminal-audit outcome-${ghost.status.toLowerCase()} printable-audit`}><div className="receipt-header"><div><span className="receipt-seal terminal"><X size={22} /></span><div><span className="eyebrow">TERMINAL OUTCOME RECORD</span><h2>{ghost.name}</h2></div></div><button autoFocus className="icon-button no-print" title="Close audit record" onClick={close}><X size={18} /></button></div><div className="blocked-hero"><span>{ghost.status === "FAILED" ? "EXECUTION FAILED" : "NO EXECUTION"}</span><h3>{ghost.status.replaceAll("_", " ")}</h3><p>{explanation}</p></div><div className="audit-timelines"><section><span className="eyebrow">LAST CONDITION STATE</span>{ghost.evaluations.map((evaluation) => <div className={`audit-step ${evaluation.satisfied ? "complete" : "absent"}`} key={evaluation.metric}><i>{evaluation.satisfied && <Check size={11} />}</i><div><b>{evaluation.metric} {evaluation.satisfied ? "ready" : "not ready"}</b><p>{formatMetric(evaluation.metric, evaluation.current)} {evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</p></div></div>)}</section><section><span className="eyebrow">SETTLEMENT TIMELINE</span><div className="audit-step blocked"><i><X size={11} /></i><div><b>Monitoring ended</b><p>{dateTime(ghost.updatedAt)}</p></div></div><div className="audit-step restored"><i><ShieldCheck size={12} /></i><div><b>Capital released</b><p>No active reservation remains</p></div></div><div className="audit-step absent"><i /><div><b>No accepted quote</b><p>No execution price was committed</p></div></div><div className="audit-step absent"><i /><div><b>No ledger transaction</b><p>Owned balances did not change</p></div></div></section></div><div className="terminal-activity"><span className="eyebrow">RECORDED ACTIVITY</span>{activityQuery.isLoading && <p>Loading the stored trail...</p>}{activities.map((activity) => <div key={activity.id}><i /><span><b>{activity.type.replaceAll("_", " ")}</b><p>{activity.message}</p><small>{dateTime(activity.created_at)}</small></span></div>)}{activityQuery.data?.nextCursor && <button className="replay-action no-print" disabled={loadOlder.isPending} onClick={() => loadOlder.mutate(activityQuery.data!.nextCursor!)}>{loadOlder.isPending ? "LOADING..." : "LOAD EARLIER ACTIVITY"}</button>}</div><div className="no-print"><ReceiptActions filename={`ghost-outcome-${ghost.id}.json`} value={exportValue} /></div></div>;
 }
 
 type HistoryOutcome = { key: string; id: string; status: "FILLED" | "BLOCKED" | "CANCELLED" | "EXPIRED" | "FAILED"; name: string; at: string; kind: "receipt" | "attempt" | "outcome"; execution?: Execution; attempt?: ExecutionAttempt; ghost?: GhostRecord };
@@ -1144,7 +1157,7 @@ function HistoryView({ workspace }: { workspace: Workspace }) {
     const story = historyOutcomeStory(outcome);
     const evidenceLabel = outcome.kind === "receipt" ? "VIEW RECEIPT" : outcome.kind === "attempt" ? "VIEW ATTEMPT" : "VIEW OUTCOME";
     return <button className={`history-audit-row outcome-${outcome.status.toLowerCase()}`} aria-expanded={selectedKey === outcome.key} aria-haspopup="dialog" aria-controls="audit-record-dialog" key={outcome.key} onClick={() => open(outcome)}><span className="outcome-mark">{outcome.status === "FILLED" ? <Check size={16} weight="bold" /> : outcome.status === "BLOCKED" ? <ShieldCheck size={17} /> : <X size={16} />}</span><div className="outcome-label"><StatusBadge status={outcome.status} /><small>{dateTime(outcome.at)}</small></div><div className="outcome-story"><span>{outcome.name}</span><b>{story.headline}</b><small>{settlement}</small></div><div className="outcome-capital"><span>CAPITAL RESULT</span><b>{story.capital}</b><small>{ready}/{evaluations.length} conditions stored</small></div><div className="outcome-proof"><span>STORED PROOF</span><b>{story.proof}</b><small>Identifiers available inside</small></div><div className="outcome-evidence"><span>EXPAND EVIDENCE</span><b>{evidenceLabel}</b><CaretRight size={17} /></div></button>;
-  })}</section>}<AnimatePresence>{selected && <motion.div className="modal-backdrop audit-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><motion.div id="audit-record-dialog" className="receipt-modal audit-modal" role="dialog" aria-modal="true" aria-label={`${selected.name} ${selected.status.toLowerCase()} audit record`} initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 40, opacity: 0 }} onClick={(event) => event.stopPropagation()}>{selected.execution ? <Receipt execution={selected.execution} close={close} /> : selected.attempt ? <BlockedAudit attempt={selected.attempt} close={close} /> : selected.ghost ? <TerminalAudit ghost={selected.ghost} activities={workspace.activities.filter((activity) => activity.ghost_id === selected.ghost!.id)} close={close} /> : null}</motion.div></motion.div>}</AnimatePresence></main>;
+  })}</section>}<AnimatePresence>{selected && <motion.div className="modal-backdrop audit-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close}><motion.div id="audit-record-dialog" className="receipt-modal audit-modal" role="dialog" aria-modal="true" aria-label={`${selected.name} ${selected.status.toLowerCase()} audit record`} initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 40, opacity: 0 }} onClick={(event) => event.stopPropagation()}>{selected.execution ? <Receipt execution={selected.execution} close={close} /> : selected.attempt ? <BlockedAudit attempt={selected.attempt} close={close} /> : selected.ghost ? <TerminalAudit ghost={selected.ghost} close={close} /> : null}</motion.div></motion.div>}</AnimatePresence></main>;
 }
 
 function DetailView({ workspace, ghostId }: { workspace: Workspace; ghostId: string }) {
@@ -1179,7 +1192,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
     executionEligible: true,
     assembledAt: receiptFrame.cutoffAt ?? workspace.frame.assembledAt,
     observations: receiptFrame.observations,
-  } : workspace.frame;
+  } : ghost.evaluationFrame ?? workspace.frame;
   const dataPaused = ghost.status === "PAUSED" && ["DATA_STALE", "FRAME_INCOMPLETE"].includes(ghost.pauseReason ?? "");
   const framePredatesArm = ghost.status === "WATCHING" && Boolean(ghost.armedAt) && new Date(frame.assembledAt).getTime() < new Date(ghost.armedAt!).getTime();
   const normalizedStatus = ghost.status === "ARMED" || ghost.status === "PAUSED" ? "WATCHING" : ghost.status;
@@ -1309,13 +1322,53 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
 
   useEffect(() => {
     if (!sessionReady) return;
-    const stream = new EventSource(`${API_URL}/api/events`, { withCredentials: true });
-    stream.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as { type: string };
-      if (!["heartbeat", "connected"].includes(payload.type)) void queryClient.invalidateQueries({ queryKey: ["workspace"] });
-      if (payload.type.startsWith("market.")) void queryClient.invalidateQueries({ queryKey: ["market-view"] });
+    let stopped = false;
+    let stream: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    const reconcile = () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+      queryClient.invalidateQueries({ queryKey: ["market-view"] }),
+      queryClient.invalidateQueries({ queryKey: ["ghost"] }),
+      queryClient.invalidateQueries({ queryKey: ["ghost-activity"] }),
+    ]);
+    const connect = () => {
+      if (stopped) return;
+      stream = new EventSource(`${API_URL}/api/events`, { withCredentials: true });
+      stream.onopen = () => {
+        const recovering = reconnectAttempt > 0;
+        reconnectAttempt = 0;
+        if (recovering) void reconcile();
+      };
+      stream.onmessage = (event) => {
+        let payload: { type: string; ghostId?: string };
+        try { payload = JSON.parse(event.data) as typeof payload; } catch { return; }
+        if (payload.type === "heartbeat" || payload.type === "connected") return;
+        if (payload.type.startsWith("market.")) {
+          void queryClient.invalidateQueries({ queryKey: ["market-view"] });
+          if (payload.type !== "market.connection.updated") void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+        }
+        if (payload.type.startsWith("ghost.")) {
+          void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+          void queryClient.invalidateQueries({ queryKey: payload.ghostId ? ["ghost", payload.ghostId] : ["ghost"] });
+          void queryClient.invalidateQueries({ queryKey: payload.ghostId ? ["ghost-activity", payload.ghostId] : ["ghost-activity"] });
+        }
+        if (payload.type.startsWith("portfolio.")) void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      };
+      stream.onerror = () => {
+        stream?.close();
+        if (stopped) return;
+        const delay = Math.min(15_000, 1_000 * 2 ** reconnectAttempt);
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
-    return () => stream.close();
+    connect();
+    return () => {
+      stopped = true;
+      stream?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
   }, [queryClient, sessionReady]);
 
   useEffect(() => {

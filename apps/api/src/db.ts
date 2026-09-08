@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS ghost_activities (
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ghost_activities_user_ghost_created
+  ON ghost_activities(user_id, ghost_id, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS worker_leases (
   partition_key TEXT PRIMARY KEY,

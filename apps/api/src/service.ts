@@ -401,10 +401,38 @@ export class GhostService {
     return (await this.workspace(userId)).ghosts;
   }
 
-  async ghostActivity(userId: string, ghostId: string) {
-    await this.ghost(userId, ghostId);
-    const activity = await rows<Record<string, unknown>>(this.database, "SELECT id, ghost_id, type, message, metadata, created_at FROM ghost_activities WHERE user_id = $1 AND ghost_id = $2 ORDER BY created_at DESC", [userId, ghostId]);
-    return activity.map((item) => ({ ...item, metadata: parseJson(item.metadata as JsonValue), created_at: new Date(item.created_at as string).toISOString() }));
+  async ghostActivity(userId: string, ghostId: string, query: unknown = {}) {
+    const request = z.object({ limit: z.coerce.number().int().min(1).max(100).default(40), cursor: z.string().optional() }).parse(query);
+    const owned = await one<{ id: string }>(this.database, "SELECT id FROM ghosts WHERE id=$1 AND user_id=$2", [ghostId, userId]);
+    if (!owned) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
+    let cursorAt: string | null = null;
+    let cursorId: string | null = null;
+    if (request.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(request.cursor, "base64url").toString("utf8")) as { at?: string; id?: string };
+        if (!decoded.at || !decoded.id) throw new Error("invalid cursor");
+        cursorAt = decoded.at;
+        cursorId = decoded.id;
+      } catch {
+        throw new AppError("INVALID_ACTIVITY_CURSOR", "The activity cursor is invalid.", 422);
+      }
+    }
+    const activity = await rows<Record<string, unknown>>(
+      this.database,
+      `SELECT id, ghost_id, type, message, metadata, created_at
+       FROM ghost_activities
+       WHERE user_id=$1 AND ghost_id=$2
+         AND ($3::timestamptz IS NULL OR (created_at, id) < ($3::timestamptz, $4::text))
+       ORDER BY created_at DESC, id DESC LIMIT $5`,
+      [userId, ghostId, cursorAt, cursorId, request.limit + 1],
+    );
+    const hasMore = activity.length > request.limit;
+    const page = activity.slice(0, request.limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((item) => ({ ...item, metadata: parseJson(item.metadata as JsonValue), created_at: new Date(item.created_at as string).toISOString() })),
+      nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ at: new Date(last.created_at as string).toISOString(), id: last.id }), "utf8").toString("base64url") : null,
+    };
   }
 
   async history(userId: string) {
@@ -421,16 +449,24 @@ export class GhostService {
   async updateGhost(userId: string, ghostId: string, payload: unknown) {
     const request = z.object({ expectedConfigurationVersion: z.number().int().positive(), draft: ghostDraftSchema }).parse(payload);
     const portfolio = await this.activePortfolio(this.database, userId);
-    const existing = await one<GhostRow>(this.database, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2 AND portfolio_id = $3", [ghostId, userId, portfolio.id]);
-    if (!existing) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
-    if (existing.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only a draft trigger can be edited.", 409);
-    if (existing.configuration_version !== request.expectedConfigurationVersion) throw new AppError("CONFIGURATION_CONFLICT", "This trigger changed since it was opened. Refresh and try again.", 409);
     const frame = await this.latestFrame(this.database, portfolio.id);
     if (!frame) throw new AppError("FRAME_NOT_FOUND", "Market frame is not ready.", 503);
     const evaluations = evaluateGhost(request.draft.conditions, frame);
     const expiresAt = new Date(Date.now() + request.draft.expiresInHours * 60 * 60 * 1000).toISOString();
-    await this.database.query(`UPDATE ghosts SET name=$1, side=$2, amount_decimal=$3, amount_type=$4, max_slippage_bps=$5, expires_at=$6, conditions=$7, evaluations=$8, configuration_version=configuration_version+1, trigger_proximity=$9, updated_at=NOW() WHERE id=$10 AND user_id=$11 AND portfolio_id=$12`, [request.draft.name, request.draft.side, request.draft.amount, request.draft.amountType, request.draft.maxSlippageBps, expiresAt, JSON.stringify(request.draft.conditions), JSON.stringify(evaluations), evaluations.filter((item) => item.satisfied).length / evaluations.length, ghostId, userId, portfolio.id]);
-    await this.addActivity(this.database, userId, ghostId, "CONFIGURATION_UPDATED", "Draft configuration updated.", { configurationVersion: existing.configuration_version + 1 });
+    await this.database.transaction(async (tx) => {
+      const updated = await tx.query(
+        `UPDATE ghosts SET name=$1, side=$2, amount_decimal=$3, amount_type=$4, max_slippage_bps=$5, expires_at=$6, conditions=$7, evaluations=$8, configuration_version=configuration_version+1, trigger_proximity=$9, updated_at=NOW()
+         WHERE id=$10 AND user_id=$11 AND portfolio_id=$12 AND status='DRAFT' AND configuration_version=$13 RETURNING configuration_version`,
+        [request.draft.name, request.draft.side, request.draft.amount, request.draft.amountType, request.draft.maxSlippageBps, expiresAt, JSON.stringify(request.draft.conditions), JSON.stringify(evaluations), evaluations.filter((item) => item.satisfied).length / evaluations.length, ghostId, userId, portfolio.id, request.expectedConfigurationVersion],
+      );
+      if (updated.affectedRows !== 1) {
+        const current = await one<Pick<GhostRow, "status" | "configuration_version">>(tx, "SELECT status, configuration_version FROM ghosts WHERE id=$1 AND user_id=$2 AND portfolio_id=$3", [ghostId, userId, portfolio.id]);
+        if (!current) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
+        if (current.status !== "DRAFT") throw new AppError("INVALID_STATE", "Only a draft trigger can be edited.", 409);
+        throw new AppError("CONFIGURATION_CONFLICT", "This trigger changed since it was opened. Refresh and try again.", 409);
+      }
+      await this.addActivity(tx, userId, ghostId, "CONFIGURATION_UPDATED", "Draft configuration updated.", { configurationVersion: request.expectedConfigurationVersion + 1 });
+    });
     return this.ghost(userId, ghostId);
   }
 
@@ -1028,6 +1064,11 @@ export class GhostService {
   async ghost(userId: string, ghostId: string) {
     const ghost = await one<GhostRow>(this.database, "SELECT * FROM ghosts WHERE id = $1 AND user_id = $2", [ghostId, userId]);
     if (!ghost) throw new AppError("GHOST_NOT_FOUND", "Trigger was not found.", 404);
+    const storedEvaluations = parseJson<Array<{ evidence?: { frameId?: string } }>>(ghost.evaluations);
+    const evaluatedFrameId = storedEvaluations.find((evaluation) => evaluation.evidence?.frameId)?.evidence?.frameId;
+    const evaluatedFrame = evaluatedFrameId
+      ? await one<FrameRow>(this.database, "SELECT * FROM evaluation_frames WHERE id=$1 AND portfolio_id=$2", [evaluatedFrameId, ghost.portfolio_id])
+      : null;
     const activities = await rows<Record<string, unknown>>(
       this.database,
       "SELECT id, type, message, metadata, created_at FROM ghost_activities WHERE ghost_id = $1 AND user_id = $2 ORDER BY created_at DESC",
@@ -1043,6 +1084,7 @@ export class GhostService {
       : null;
     return {
       ...publicGhost(ghost),
+      evaluationFrame: evaluatedFrame ? frameFromRow(evaluatedFrame) : null,
       reservation: reservation
         ? { id: reservation.id, asset: reservation.asset, amount: reservation.amount_decimal, status: reservation.status }
         : null,

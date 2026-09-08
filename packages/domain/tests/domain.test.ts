@@ -110,11 +110,31 @@ describe("Ghost domain", () => {
       { metric: "PNL", operator: "GTE", target: "0.4" },
     ]);
     expect(result.unsupported).toEqual([]);
+    expect(result.canApply).toBe(true);
+  });
+
+  it("preserves signed condition values and does not add unrequested conditions", () => {
+    const parsed = parseGhostPrompt("Sell 25% of my SOL when position P&L is at most -10%.", STRATEGY_TEMPLATES[1]!.draft);
+    expect(parsed.canApply).toBe(true);
+    expect(parsed.draft.conditions).toEqual([{ metric: "PNL", operator: "LTE", target: "-0.1" }]);
+  });
+
+  it.each([
+    ["Buy and sell 100 USDC when SOL is above $300.", "both buy and sell"],
+    ["Buy 100 USDC when funding is above 0,05%.", "Ambiguous decimal"],
+    ["Do not sell 25% when SOL is below $220.", "Negated"],
+    ["Buy 100 when SOL is above $300.", "requires USDC"],
+    ["Sell 25% when funding is above 5.", "explicit percent"],
+  ])("blocks unresolved input without silently applying it: %s", (prompt, issue) => {
+    const parsed = parseGhostPrompt(prompt, STRATEGY_TEMPLATES[0]!.draft);
+    expect(parsed.canApply).toBe(false);
+    expect(parsed.blockingIssues.join(" ")).toContain(issue);
   });
 
   it("reports unsupported metrics and produces configuration-only intelligence", () => {
     const parsed = parseGhostPrompt("Sell 25% of my SOL below $220 if liquidity is under $500M and whale concentration rises.", STRATEGY_TEMPLATES[2]!.draft);
     expect(parsed.unsupported).toEqual(["whale concentration", "liquidity"]);
+    expect(parsed.canApply).toBe(false);
     expect(parsed.draft.conditions.find((condition) => condition.metric === "PRICE")).toMatchObject({ operator: "LTE", target: "220" });
     const insights = ghostIntelligence(parsed.draft, { PRICE: { value: "246" }, FUNDING: { value: "0.00031" }, PNL: { value: "-0.016" } });
     expect(insights[0]).toMatchObject({ kind: "CONFIGURATION_WARNING", action: "ADJUST" });

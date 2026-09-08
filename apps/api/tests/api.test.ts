@@ -769,7 +769,35 @@ describe("Ghost API", () => {
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().error.code).toBe("CONFIGURATION_CONFLICT");
     const activity = await app.inject({ method: "GET", url: `/api/ghosts/${ghost.id}/activity`, headers: { cookie } });
-    expect(activity.json()[0]).toMatchObject({ type: "CONFIGURATION_UPDATED" });
+    expect(activity.json().items[0]).toMatchObject({ type: "CONFIGURATION_UPDATED" });
+  });
+
+  it("accepts exactly one of two concurrent edits at the same configuration version", async () => {
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie }, payload: sellDraft("Concurrent draft") })).json();
+    const responses = await Promise.all([
+      app.inject({ method: "PATCH", url: `/api/ghosts/${created.id}`, headers: { cookie }, payload: { expectedConfigurationVersion: created.configurationVersion, draft: sellDraft("First concurrent edit") } }),
+      app.inject({ method: "PATCH", url: `/api/ghosts/${created.id}`, headers: { cookie }, payload: { expectedConfigurationVersion: created.configurationVersion, draft: sellDraft("Second concurrent edit") } }),
+    ]);
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+    const count = await database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM ghost_activities WHERE ghost_id=$1 AND type='CONFIGURATION_UPDATED'", [created.id]);
+    expect(Number(count.rows[0]?.count)).toBe(1);
+  });
+
+  it("paginates a scoped activity trail beyond the workspace window", async () => {
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie } })).json();
+    const created = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie }, payload: sellDraft("Long audit trail") })).json();
+    await database.query(
+      `INSERT INTO ghost_activities (id,user_id,ghost_id,type,message,metadata,created_at)
+       SELECT $1 || '-' || value::text, $2, $3, 'AUDIT_EVENT', 'Stored event ' || value::text, '{}'::jsonb, NOW() - (value * INTERVAL '1 second')
+       FROM generate_series(1,85) AS value`,
+      [randomUUID(), workspace.identity.id, created.id],
+    );
+    const first = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}/activity?limit=40`, headers: { cookie } })).json();
+    const second = (await app.inject({ method: "GET", url: `/api/ghosts/${created.id}/activity?limit=40&cursor=${encodeURIComponent(first.nextCursor)}`, headers: { cookie } })).json();
+    expect(first.items).toHaveLength(40);
+    expect(second.items).toHaveLength(40);
+    expect(new Set([...first.items, ...second.items].map((item: { id: string }) => item.id)).size).toBe(80);
+    expect(second.nextCursor).toBeTruthy();
   });
 
   it("resets a portfolio idempotently into a new seeded generation", async () => {

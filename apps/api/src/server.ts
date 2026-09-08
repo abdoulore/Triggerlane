@@ -186,7 +186,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     changed(request.userId!, "ghost.status.updated", { ghostId: ghost.id, status: ghost.status });
     return ghost;
   });
-  app.get("/api/ghosts/:id/activity", { preHandler: requireSession }, async (request) => service.ghostActivity(request.userId!, (request.params as { id: string }).id));
+  app.get("/api/ghosts/:id/activity", { preHandler: requireSession }, async (request) => service.ghostActivity(request.userId!, (request.params as { id: string }).id, request.query));
   app.get("/api/history", { preHandler: requireSession }, async (request) => service.history(request.userId!));
   app.get("/api/executions/:id", { preHandler: requireSession }, async (request) => service.execution(request.userId!, (request.params as { id: string }).id));
 
@@ -200,7 +200,7 @@ export async function buildServer(database?: PGlite): Promise<FastifyInstance> {
     const { id } = request.params as { id: string };
     const ghost = await service.armGhost(request.userId!, id, requireIdempotencyKey(request));
     changed(request.userId!, "ghost.status.updated", { ghostId: ghost.id, status: ghost.status });
-    changed(request.userId!, "market.frame.updated", { reason: "ghost.armed" });
+    changed(request.userId!, "market.frame.updated", { reason: "ghost.armed", ghostId: ghost.id });
     await service.trackAnalytics(request.userId!, "ghost_armed", { ghostId: ghost.id });
     return ghost;
   });

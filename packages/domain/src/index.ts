@@ -176,11 +176,13 @@ export type AiComposeResult = {
   interpretation: string[];
   retained: string[];
   unsupported: string[];
+  blockingIssues: string[];
+  canApply: boolean;
   insights: GhostInsight[];
   disclaimer: string;
 };
 
-const numeric = "([0-9]+(?:[,.][0-9]+)?)";
+const numeric = "([+-]?(?:(?:[0-9]{1,3}(?:,[0-9]{3})+)|[0-9]+)(?:\\.[0-9]+)?)";
 
 function firstNumber(input: string, patterns: RegExp[]): number | null {
   for (const pattern of patterns) {
@@ -197,12 +199,20 @@ function inferredOperator(input: string, subject: string): Operator | null {
   return null;
 }
 
+function hasConflictingOperators(input: string, subject: string): boolean {
+  const relevant = input.match(new RegExp(`${subject}[^.!?]{0,70}`, "i"))?.[0] ?? "";
+  return /\b(below|under|at most|less than|no more than)\b/i.test(relevant)
+    && /\b(above|over|at least|greater than|exceeds?)\b/i.test(relevant);
+}
+
 export function parseGhostPrompt(rawPrompt: string, baseDraft: GhostDraft): Omit<AiComposeResult, "insights"> {
   const prompt = rawPrompt.trim();
   const lower = prompt.toLowerCase();
   const next: GhostDraft = structuredClone(baseDraft);
+  next.conditions = [];
   const interpretation: string[] = [];
   const retained: string[] = [];
+  const blockingIssues: string[] = [];
   const unsupported = [
     ["whale concentration", /\b(whale|holder concentration)\b/i],
     ["liquidity", /\bliquidity\b/i],
@@ -211,12 +221,23 @@ export function parseGhostPrompt(rawPrompt: string, baseDraft: GhostDraft): Omit
     ["volatility", /\bvolatility\b/i],
   ].filter(([, pattern]) => (pattern as RegExp).test(prompt)).map(([label]) => label as string);
 
-  if (/\b(sell|exit|take profit|scale out|reduce)\b/i.test(prompt)) {
+  const commaValues = prompt.match(/[+-]?\d+(?:,\d+)+/g) ?? [];
+  if (commaValues.some((value) => value.split(",").slice(1).some((group) => group.length !== 3))) {
+    blockingIssues.push("Ambiguous decimal format. Use a period for decimals, for example 0.05%.");
+  }
+  if (/\b(?:do not|don't|never|not)\b/i.test(prompt)) {
+    blockingIssues.push("Negated instructions are not supported. Describe the action and condition you do want.");
+  }
+  const asksBuy = /\b(buy|accumulate|enter|add)\b/i.test(prompt);
+  const asksSell = /\b(sell|exit|take profit|scale out|reduce)\b/i.test(prompt);
+  if (asksBuy && asksSell) blockingIssues.push("The instruction contains both buy and sell directions. Choose one action.");
+
+  if (asksSell && !asksBuy) {
     next.side = "SELL";
     next.amountType = "POSITION_PERCENT";
     next.name = "AI SOL exit";
     interpretation.push("Action: sell SOL");
-  } else if (/\b(buy|accumulate|enter|add)\b/i.test(prompt)) {
+  } else if (asksBuy && !asksSell) {
     next.side = "BUY";
     next.amountType = "USDC";
     next.name = "AI SOL entry";
@@ -234,21 +255,21 @@ export function parseGhostPrompt(rawPrompt: string, baseDraft: GhostDraft): Omit
   interpretation.push(`Amount: ${next.side === "SELL" ? `${next.amount}% of the SOL position` : `${next.amount} USDC`}`);
 
   const updateCondition = (metric: Metric, value: number | null, operator: Operator | null, ratio = false) => {
-    const existing = next.conditions.find((condition) => condition.metric === metric);
-    if (value == null) {
-      if (existing) retained.push(`${metric === "PNL" ? "Position P&L" : metric.toLowerCase()} condition retained.`);
-      return;
-    }
-    if (existing) next.conditions = next.conditions.map((condition) => condition.metric === metric ? { ...condition, operator: operator ?? condition.operator, target: String(ratio ? value / 100 : value) } : condition);
-    else next.conditions.push({ metric, operator: operator ?? "GTE", target: String(ratio ? value / 100 : value) });
+    if (value == null) return;
+    next.conditions.push({ metric, operator: operator ?? "GTE", target: String(ratio ? value / 100 : value) });
     const condition = next.conditions.find((item) => item.metric === metric)!;
     interpretation.push(`${metric === "PNL" ? "Position P&L" : metric}: ${condition.operator === "GTE" ? "at least" : "at most"} ${metric === "PRICE" ? `$${value}` : `${value}%`}`);
   };
 
-  const price = firstNumber(prompt, [new RegExp(`(?:sol|price|it)[^.!?]{0,30}?(?:reaches?|hits?|above|over|below|under|at least|at most|exceeds?|drops? to|falls? to)\\s*\\$?${numeric}`, "i"), new RegExp(`(?:reaches?|hits?|above|over|below|under)\\s*\\$${numeric}`, "i")]);
+  const price = firstNumber(prompt, [new RegExp(`(?:\\bprice\\b|\\bit\\b)[^.!?]{0,30}?(?:reaches?|hits?|above|over|below|under|at least|at most|exceeds?|drops? to|falls? to)\\s*\\$?${numeric}`, "i"), new RegExp(`\\bsol\\b[^.!?]{0,14}?(?:reaches?|hits?|above|over|below|under|exceeds?|drops? to|falls? to)\\s*\\$?${numeric}`, "i"), new RegExp(`(?:reaches?|hits?|above|over|below|under)\\s*\\$${numeric}`, "i")]);
   const funding = firstNumber(prompt, [new RegExp(`funding[^.!?]{0,35}?${numeric}\\s*%`, "i")]);
-  const pnl = firstNumber(prompt, [new RegExp(`(?:profit|p&l|pnl|position)[^.!?]{0,45}?${numeric}\\s*%`, "i")]);
-  updateCondition("PRICE", price, inferredOperator(prompt, "(?:sol|price|it)"));
+  const pnl = firstNumber(prompt, [new RegExp(`(?:profit|loss|drawdown|p&l|pnl|position)[^.!?]{0,45}?${numeric}\\s*%`, "i")]);
+  if (hasConflictingOperators(prompt, "(?:\\bsol\\b|\\bprice\\b|\\bit\\b)")) blockingIssues.push("The price condition contains conflicting directions.");
+  if (hasConflictingOperators(prompt, "funding")) blockingIssues.push("The funding condition contains conflicting directions.");
+  if (hasConflictingOperators(prompt, "(?:profit|loss|drawdown|p&l|pnl|position)")) blockingIssues.push("The position P&L condition contains conflicting directions.");
+  if (/\bfunding\b/i.test(prompt) && funding == null && /\bfunding\b[^.!?]{0,35}[+-]?\d/i.test(prompt)) blockingIssues.push("Funding requires an explicit percent unit.");
+  if (/\b(?:profit|loss|drawdown|p&l|pnl|position)\b/i.test(prompt) && pnl == null && /\b(?:profit|loss|drawdown|p&l|pnl|position)\b[^.!?]{0,45}[+-]?\d/i.test(prompt)) blockingIssues.push("Position P&L requires an explicit percent unit.");
+  updateCondition("PRICE", price, inferredOperator(prompt, "(?:\\bsol\\b|\\bprice\\b|\\bit\\b)"));
   updateCondition("FUNDING", funding, inferredOperator(prompt, "funding"), true);
   updateCondition("PNL", pnl, inferredOperator(prompt, "(?:profit|p&l|pnl|position)"), true);
 
@@ -265,9 +286,19 @@ export function parseGhostPrompt(rawPrompt: string, baseDraft: GhostDraft): Omit
     interpretation.push(`Expiry: ${count} ${expiry[2].toLowerCase()}`);
   } else retained.push("Expiry retained.");
 
-  if (unsupported.length) interpretation.push(`Unsupported requests omitted: ${unsupported.join(", ")}`);
+  if (next.side === "BUY" && asksBuy && fixedBuyAmount == null && /\b(?:buy|spend|use|with)\b[^.!?]{0,20}[+-]?\d/i.test(prompt)) blockingIssues.push("Buy amount requires USDC or $ units.");
+  if (next.side === "SELL" && asksSell && percentAmount == null && !/\b(all|everything|entire|half|quarter)\b/i.test(prompt) && /\b(?:sell|exit|reduce|scale out)\b[^.!?]{0,20}[+-]?\d/i.test(prompt)) blockingIssues.push("Sell amount requires a percent unit.");
+  if (next.conditions.length === 0) {
+    next.conditions = structuredClone(baseDraft.conditions);
+    retained.push("No supported condition was resolved; current conditions are shown only for review.");
+    blockingIssues.push("Add at least one supported condition with a clear value and unit.");
+  }
+  if (unsupported.length) {
+    interpretation.push(`Unsupported requests detected: ${unsupported.join(", ")}`);
+    blockingIssues.push(`Unsupported conditions cannot be omitted without changing meaning: ${unsupported.join(", ")}.`);
+  }
   const draft = ghostDraftSchema.parse(next);
-  return { draft, interpretation, retained, unsupported, disclaimer: "Triggerlane analyzes configuration and historical conditions. It does not provide investment advice." };
+  return { draft, interpretation, retained, unsupported, blockingIssues, canApply: blockingIssues.length === 0, disclaimer: "Triggerlane analyzes configuration and historical conditions. It does not provide investment advice." };
 }
 
 export function ghostIntelligence(draft: GhostDraft, observations: Record<Metric, { value: string }>): GhostInsight[] {
@@ -459,6 +490,14 @@ export interface ConditionResult {
   current: string;
   satisfied: boolean;
   distanceRatio: string;
+  evidence?: {
+    frameId: string;
+    observationId: string;
+    provider: string;
+    sourceTimestamp: string | null;
+    receivedAt: string;
+    provenance: "DEMO" | "LIVE";
+  };
 }
 
 export interface QuoteResult {
@@ -524,9 +563,20 @@ export function evaluateCondition(
 }
 
 export function evaluateGhost(conditions: GhostDraft["conditions"], frame: EvaluationFrame): ConditionResult[] {
-  return conditions.map((condition) =>
-    evaluateCondition(condition, frame.observations[condition.metric].value),
-  );
+  return conditions.map((condition) => {
+    const observation = frame.observations[condition.metric];
+    return {
+      ...evaluateCondition(condition, observation.value),
+      evidence: {
+        frameId: frame.id,
+        observationId: observation.id,
+        provider: observation.provider,
+        sourceTimestamp: observation.sourceTimestamp,
+        receivedAt: observation.receivedAt,
+        provenance: observation.provenance,
+      },
+    };
+  });
 }
 
 export function evaluateReplay(conditions: GhostDraft["conditions"], frames: EvaluationFrame[]): ReplayEvaluation {
