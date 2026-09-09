@@ -544,10 +544,8 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const summary = `${state.side === "SELL" ? `Sell ${state.amount}% of SOL` : `Buy SOL with ${money.format(Number(state.amount))} USDC`} when ${conditionSummary}.`;
   const price = Number(current.PRICE.value);
   const commitmentAmount = state.side === "BUY" ? Number(state.amount) : Number(workspace.portfolio.balances.SOL.quantity) * Number(state.amount) / 100;
-  const commitmentValue = state.side === "BUY" ? commitmentAmount : commitmentAmount * price;
   const commitmentAsset = state.side === "BUY" ? "USDC" : "SOL";
   const canCommit = commitmentAmount > 0 && commitmentAmount <= Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available);
-  const actionConsequence = state.side === "BUY" ? `Buy SOL with ${money.format(Number(state.amount))} USDC` : `Sell ${state.amount}% of the SOL position`;
 
   return (
     <aside className="composer-panel">
@@ -594,19 +592,21 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         {conditionMenuOpen && <div className="condition-add-menu" role="menu">{conditionOrder.filter((metric) => !state.conditions.some((condition) => condition.metric === metric)).map((metric) => <button type="button" role="menuitem" key={metric} onClick={() => { dispatch({ type: "add-condition", condition: { ...rememberedConditions.current[metric] } }); setConditionMenuOpen(false); }}><span>{metricLabels[metric]}</span><small>{formatMetric(metric, current[metric].value)} now</small></button>)}</div>}
       </div>}
 
-      <div className="constraint-row">
-        <label>Max slippage<div className="compact-input"><input type="number" min="1" max="500" value={state.maxSlippageBps} onChange={(event) => dispatch({ type: "field", field: "maxSlippageBps", value: Number(event.target.value) })} /><span>bps</span></div></label>
-        <label>Expires<select value={state.expiresInHours} onChange={(event) => dispatch({ type: "field", field: "expiresInHours", value: Number(event.target.value) })}><option value={1}>1 hour</option><option value={24}>24 hours</option><option value={168}>7 days</option><option value={720}>30 days</option></select></label>
+      <div className={`composer-review-line ${canCommit ? "" : "invalid"}`} aria-label="Trigger summary and capital commitment">
+        <ShieldCheck size={17} /><span>{summary}</span><b>{quantity.format(commitmentAmount)} {commitmentAsset}</b>
       </div>
 
-      <div className="intent-summary"><ShieldCheck size={18} /><p>{summary}</p></div>
-      <section className={`commitment-summary ${canCommit ? "" : "invalid"}`} aria-label="Capital commitment preview">
-        <div><LockSimple size={18} weight="duotone" /><span>RESERVED WHEN ACTIVE</span><b>{quantity.format(commitmentAmount)} {commitmentAsset}</b></div>
-        <dl><div><dt>EST. VALUE</dt><dd>${money.format(commitmentValue)}</dd></div><div><dt>REMAINS AVAILABLE</dt><dd>${money.format(Math.max(0, Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available) * (state.side === "BUY" ? 1 : price) - commitmentValue))}</dd></div></dl>
-        <p>{canCommit ? "Reserved only after arming. Released on cancel or expiry." : "Commitment exceeds currently available virtual funds."}</p>
-      </section>
-      <p className="start-summary" aria-label="What happens when this trigger starts"><Lightning size={16} weight="duotone" /><span>After saving, Start Watching reserves {quantity.format(commitmentAmount)} {commitmentAsset}, waits for {state.conditions.length === 1 ? "this rule" : `all ${state.conditions.length} rules`} in one frame, then {actionConsequence.toLowerCase()} once.</span></p>
-      <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Virtual execution ready</span></button>
+      <details className="composer-advanced">
+        <summary>Risk and advanced settings<CaretRight size={15} /></summary>
+        <div>
+          <div className="constraint-row">
+            <label>Max slippage<div className="compact-input"><input type="number" min="1" max="500" value={state.maxSlippageBps} onChange={(event) => dispatch({ type: "field", field: "maxSlippageBps", value: Number(event.target.value) })} /><span>bps</span></div></label>
+            <label>Expires<select value={state.expiresInHours} onChange={(event) => dispatch({ type: "field", field: "expiresInHours", value: Number(event.target.value) })}><option value={1}>1 hour</option><option value={24}>24 hours</option><option value={168}>7 days</option><option value={720}>30 days</option></select></label>
+          </div>
+          <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Virtual execution ready</span></button>
+          {capabilities.features.replay && <button className="replay-action" onClick={() => runReplay.mutate(replayPeriod)} disabled={runReplay.isPending}><ClockCounterClockwise size={17} />{runReplay.isPending ? "RUNNING DEMO REPLAY..." : "RUN DEMO REPLAY"}</button>}
+        </div>
+      </details>
       {error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{error}</b><small>No capital moved. Your editable Composer values remain in place.</small></div></div>}
 
       {shownDraft?.status === "DRAFT" ? (
@@ -619,7 +619,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         </button>
       )}
       {shownDraft && <a className="draft-link" href={`/ghost/${shownDraft.id}`}><StatusBadge status={shownDraft.status} /><span>{shownDraft.name}</span><CaretRight size={15} /></a>}
-      {capabilities.features.replay && <button className="replay-action" onClick={() => runReplay.mutate(replayPeriod)} disabled={runReplay.isPending}><ClockCounterClockwise size={17} />{runReplay.isPending ? "RUNNING DEMO REPLAY..." : "RUN DEMO REPLAY"}</button>}
       <AnimatePresence>{replay && <motion.div className="modal-backdrop replay-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setReplay(null)}><motion.div className="replay-modal" role="dialog" aria-modal="true" aria-label={`${state.name} historical Replay`} initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onClick={(event) => event.stopPropagation()}><ReplayPanel result={replay} period={replayPeriod} onPeriod={(period) => { setReplayPeriod(period); runReplay.mutate(period); }} close={() => setReplay(null)} loading={runReplay.isPending} /></motion.div></motion.div>}</AnimatePresence>
       <AnimatePresence>{compiler && <motion.div className="modal-backdrop replay-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setCompiler(null)}><motion.div className="replay-modal compiler-modal" role="dialog" aria-modal="true" aria-labelledby="compiler-title" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onClick={(event) => event.stopPropagation()}><CompilerPanel preview={compiler} close={() => setCompiler(null)} /></motion.div></motion.div>}</AnimatePresence>
       </>}
@@ -744,7 +743,7 @@ function DiscoverView({ workspace }: { workspace: Workspace }) {
   const commitmentAsset = selected?.draft.side === "BUY" ? "USDC" : "SOL";
   const commitmentValue = selected?.draft.side === "BUY" ? commitmentAmount : commitmentAmount * price;
   return <main className="page-view discover-editorial">
-    <div className="page-title discover-title"><div><span className="eyebrow">CURATED TRIGGER STRATEGIES</span><h1>Start with a moment worth watching</h1><p>Explore a small set of tested ideas, understand every condition, then load one into Composer for your own review.</p></div><div className="discover-market"><span>SUPPORTED SIMULATION</span><b>SOL PERP / USDC</b><small>PRICE · FUNDING · POSITION P&amp;L</small></div></div>
+    <div className="page-title discover-title"><div><span className="eyebrow">STRATEGIES</span><h1>Choose a starting point</h1><p>Preview a strategy, then open it in Composer to make it yours.</p></div><div className="discover-market"><span>MARKET</span><b>SOL PERP / USDC</b><small>PRICE · FUNDING · POSITION P&amp;L</small></div></div>
     <DiscoverBeginnerGuide />
     <nav className="discover-navigation" aria-label="Strategy catalog navigation"><div className="strategy-tabs" role="tablist" aria-label="Strategy categories">{catalog.data.categories.map((item) => <button role="tab" aria-selected={category === item} className={category === item ? "active" : ""} key={item} onClick={() => chooseCategory(item)}>{item}</button>)}</div><div className="metric-filters" role="group" aria-label="Supported metric filter"><span>FILTER BY SIGNAL</span>{(["ALL", ...catalog.data.capabilities.metrics] as const).map((item) => <button aria-pressed={metric === item} className={metric === item ? "active" : ""} key={item} onClick={() => { setMetric(item); setSelectedId(null); setReplayResult(null); }}>{item === "ALL" ? "All three" : item === "PNL" ? "Position P&L" : item}</button>)}</div></nav>
     {category === "Advanced" ? <section className="strategy-unavailable advanced-boundary"><SlidersHorizontal size={35} /><span className="eyebrow">OUTSIDE THE CURRENT CATALOG</span><h2>Advanced signals need qualified data first</h2><p>Liquidity, TVL, and volume are not available to the execution engine, so strategies that depend on them stay outside the selectable catalog.</p><div>{catalog.data.capabilities.unsupportedAdvancedMetrics.map((item) => <span key={item}>{item} · UNSUPPORTED</span>)}</div><button onClick={() => chooseCategory("Popular")}>RETURN TO CURATED STRATEGIES</button></section> : selected ? <>
@@ -752,6 +751,34 @@ function DiscoverView({ workspace }: { workspace: Workspace }) {
       {replayResult?.strategyId === selected.id && <DiscoverReplay result={replayResult.result} strategy={selected} onContinue={() => useStrategy.mutate(selected.id)} loading={useStrategy.isPending} />}
       <section className="curated-index" aria-labelledby="curated-index-title"><header><div><span className="eyebrow">CURATED INDEX</span><h2 id="curated-index-title">Compare the supported ideas</h2></div><p>{visible.length} {visible.length === 1 ? "strategy uses" : "strategies use"} only schema-valid Price, Funding, and Position P&amp;L conditions.</p></header><div>{visible.map((strategy, index) => <motion.article className={strategy.id === selected.id ? "selected" : ""} key={strategy.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * .04 }}><button className="strategy-index-main" onClick={() => chooseStrategy(strategy)} aria-label={`Preview ${strategy.name}`}><span>{String(catalog.data!.strategies.indexOf(strategy) + 1).padStart(2, "0")}</span><div><small>{strategy.category.toUpperCase()} · {strategy.thesis.toUpperCase()}</small><h3>{strategy.name}</h3><p>{strategy.description}</p></div><div><span>{strategy.draft.side}</span><b>{strategy.draft.side === "BUY" ? `${strategy.draft.amount} USDC` : `${strategy.draft.amount}% SOL`}</b><small>{strategy.draft.expiresInHours / 24}D EXPIRY</small></div><CaretRight size={19} /></button></motion.article>)}</div></section>
     </> : <section className="strategy-unavailable"><Database size={35} /><h2>No strategy uses that supported signal</h2><p>Clear the signal filter to return to the complete curated catalog.</p><button onClick={() => setMetric("ALL")}>SHOW ALL STRATEGIES</button></section>}
+  </main>;
+}
+
+function IdeasView() {
+  const catalog = useQuery({ queryKey: ["strategies"], queryFn: () => api<StrategyCatalog>("/api/strategies") });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const useStrategy = useMutation({ mutationFn: (id: string) => api<Strategy>(`/api/strategies/${id}/use`, { method: "POST" }), onSuccess: (strategy) => { window.location.href = `/trade?strategy=${strategy.id}`; } });
+  if (!catalog.data) return <LoadingView />;
+  const ideas = catalog.data.strategies.slice(0, 6);
+  const selected = ideas.find((strategy) => strategy.id === selectedId) ?? ideas[0] ?? null;
+  if (!selected) return <main className="page-view ideas-page"><div className="empty-state"><h1>No ideas available</h1><p>Build a trigger directly from the Trade page.</p><a href="/trade">GO TO TRADE</a></div></main>;
+  const action = selected.draft.side === "BUY" ? `Buy with ${money.format(Number(selected.draft.amount))} USDC` : `Sell ${selected.draft.amount}% of SOL`;
+
+  return <main className="page-view ideas-page">
+    <div className="page-title ideas-title"><div><span className="eyebrow">IDEAS</span><h1>Find a starting point</h1><p>Choose an approach, review the moment it watches for, then make it yours.</p></div><span className="ideas-count">{ideas.length} STARTING POINTS</span></div>
+    <div className="ideas-layout">
+      <section className="ideas-list" aria-labelledby="ideas-list-title">
+        <header><h2 id="ideas-list-title">Choose an approach</h2><p>Nothing is saved until you review it in Trade.</p></header>
+        {ideas.map((strategy, index) => <button type="button" className={strategy.id === selected.id ? "selected" : ""} aria-pressed={strategy.id === selected.id} onClick={() => setSelectedId(strategy.id)} key={strategy.id}><span>{String(index + 1).padStart(2, "0")}</span><div><small>{strategy.category.toUpperCase()}</small><h3>{strategy.name}</h3><p>{strategy.description}</p></div><CaretRight size={18} /></button>)}
+      </section>
+      <aside className="idea-preview" aria-labelledby="idea-preview-title">
+        <div><span className="eyebrow">{selected.thesis}</span><h2 id="idea-preview-title">{selected.name}</h2><p>{selected.description}</p></div>
+        <section aria-label="Idea conditions"><span>WHEN</span>{selected.draft.conditions.map((condition) => <div key={condition.metric}><b>{condition.metric === "PNL" ? "Position P&L" : condition.metric.toLowerCase()}</b><strong>{condition.operator === "GTE" ? "at least" : "at most"} {formatMetric(condition.metric, condition.target)}</strong></div>)}</section>
+        <div className="idea-action"><span>THEN</span><strong>{action}</strong><small>Executes once when every condition is true together.</small></div>
+        <button className="idea-use" onClick={() => useStrategy.mutate(selected.id)} disabled={useStrategy.isPending}>{useStrategy.isPending ? "OPENING..." : "USE THIS SETUP"}<ArrowRight size={17} /></button>
+        <small className="idea-handoff">Opens as an editable trigger in Trade.</small>
+      </aside>
+    </div>
   </main>;
 }
 
@@ -795,7 +822,6 @@ function FeedControls({ workspace, step, stepping }: { workspace: Workspace; ste
 }
 
 function TradeView({ workspace, market, marketLoading, interval, onInterval, capabilities }: { workspace: Workspace; market?: MarketView; marketLoading: boolean; interval: "1m" | "5m" | "1h"; onInterval: (interval: "1m" | "5m" | "1h") => void; capabilities: RuntimeCapabilities }) {
-  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [mobileComposer, setMobileComposer] = useState(false);
@@ -831,21 +857,9 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
   const price = market?.price.value ?? null;
   const funding = market?.funding.value ?? null;
   const observedAt = market?.sourceTimestamp ?? market?.receivedAt ?? null;
-  const evaluations = selected?.evaluations?.length ? selected.evaluations : initialComposer.conditions.map((condition) => evaluateCondition(condition, workspace.frame.observations[condition.metric].value));
-  const ready = evaluations.filter((item) => item.satisfied).length;
-  const conditionCount = evaluations.length;
-  const waitingReason = ghostWaitingReason(selected, evaluations, workspace.frame);
-  const step = useMutation({
-    mutationFn: () => api("/api/demo/step", { method: "POST" }),
-    onSuccess: () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["workspace"] }),
-      queryClient.invalidateQueries({ queryKey: ["market-view"] }),
-    ]),
-  });
 
   return (
     <div className="trade-layout phase-25-trade">
-      <div id="portfolio"><PortfolioRail workspace={workspace} market={market} /></div>
       <main className="market-workspace">
         <section className="market-header" aria-label="Market overview">
           <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL PERP <i>/</i> USDC</h1></div></div>
@@ -862,21 +876,6 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
           <MarketChart points={market?.history.points ?? []} status={market?.status ?? (marketLoading ? "LOADING" : "UNAVAILABLE")} />
           <div className="chart-watermark"><BrandIcon size={56} weight="duotone" /><span>TRIGGERLANE FEED</span></div>
         </section>
-        <section className="watch-zone">
-          <div className="watch-heading">
-            <div><span className="eyebrow">TRIGGER IN VIEW</span>{workspace.ghosts.length ? <label className="trigger-view-select"><span className="sr-only">Select trigger to inspect</span><select aria-label="Select trigger to inspect" value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{workspace.ghosts.map((ghost) => <option value={ghost.id} key={ghost.id}>{ghost.name} · {ghost.status}</option>)}</select></label> : <h2>Your first trigger</h2>}<p className="waiting-reason"><Pulse size={13} />{waitingReason}</p></div>
-            <div className="readiness"><span>{ready} / {conditionCount} READY</span><strong>{Math.round((ready / conditionCount) * 100)}%</strong></div>
-          </div>
-          <CompactSignalEngine evaluations={evaluations} ghost={selected} />
-          <ConditionStrip evaluations={evaluations} frame={workspace.frame} />
-          <GhostLifecycle ghost={selected} />
-        </section>
-        <section className="activity-tape">
-          <div className="tape-label"><Broadcast size={16} /><span>ACTIVITY</span></div>
-          <div className="tape-events"><AnimatePresence initial={false}>{workspace.activities.slice(0, 3).map((activity) => <motion.span key={activity.id} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}><i />{activity.message}<time>{dateTime(activity.created_at)}</time></motion.span>)}</AnimatePresence></div>
-        </section>
-        {!modeIsLive && <FeedControls workspace={workspace} step={() => step.mutate()} stepping={step.isPending} />}
-        <AnimatePresence>{selected?.status === "FILLED" && <motion.div className="execution-flash" role="status" initial={{ opacity: 0, scale: .94 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}><span><Check size={24} weight="bold" /></span><div><b>TRIGGER FILLED</b><small>Virtual settlement committed exactly once</small></div></motion.div>}</AnimatePresence>
       </main>
       <button ref={composerTriggerRef} className="mobile-compose-trigger" aria-expanded={composerOpen} aria-controls="trigger-composer-sheet" onClick={() => setComposerOpen(true)}><Plus size={17} weight="bold" />BUILD A TRIGGER</button>
       <div id="trigger-composer-sheet" className={`composer-shell ${composerOpen ? "open" : ""}`} aria-hidden={mobileComposer && !composerOpen} inert={mobileComposer && !composerOpen ? true : undefined}><button ref={composerCloseRef} className="composer-sheet-close" title="Close Composer" onClick={() => { setComposerOpen(false); composerTriggerRef.current?.focus(); }}><X size={19} /></button><Composer workspace={workspace} capabilities={capabilities} onCreated={(ghost) => { setSelectedId(ghost.id); setComposerOpen(false); }} /></div>
@@ -906,64 +905,47 @@ function expiryDistance(value: string) {
   return `${days}d remaining`;
 }
 
+function TriggerSectionNav({ active }: { active: "active" | "past" }) {
+  return <nav className="trigger-section-nav" aria-label="Trigger views"><a className={active === "active" ? "active" : ""} href="/ghosts">Active</a><a className={active === "past" ? "active" : ""} href="/ghosts?view=past">Past</a></nav>;
+}
+
 function GhostsView({ workspace }: { workspace: Workspace }) {
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "WATCHING" | "PAUSED" | "DRAFT" | "TERMINAL">("ALL");
-  const [actionFilter, setActionFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
-  const [proximityFilter, setProximityFilter] = useState<"ALL" | "NEAR" | "BUILDING" | "FAR">("ALL");
-  const [sortBy, setSortBy] = useState<"READINESS" | "CAPITAL" | "EXPIRY" | "RECENT">("READINESS");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "WATCHING" | "PAUSED" | "DRAFT">("ALL");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [filtersRestored, setFiltersRestored] = useState(false);
   const pageSize = 24;
-  const price = Number(workspace.frame.observations.PRICE.value);
   const terminalStatuses = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"];
-  const capitalValue = (ghost: GhostRecord) => ghost.reservation ? Number(ghost.reservation.amount) * (ghost.reservation.asset === "SOL" ? price : 1) : 0;
+  const activeGhosts = workspace.ghosts.filter((ghost) => !terminalStatuses.includes(ghost.status));
   const reasonFor = (ghost: GhostRecord) => { const summary = ghostStateSummary(ghost, workspace.frame); return `${summary.headline}. ${summary.reason}`; };
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const rows = workspace.ghosts.filter((ghost) => {
-      const terminal = terminalStatuses.includes(ghost.status);
-      if (statusFilter !== "ALL" && (statusFilter === "TERMINAL" ? !terminal : ghost.status !== statusFilter)) return false;
-      if (actionFilter !== "ALL" && ghost.side !== actionFilter) return false;
-      const ready = ghost.evaluations.filter((evaluation) => evaluation.satisfied).length;
-      if (proximityFilter === "NEAR" && ready < 2) return false;
-      if (proximityFilter === "BUILDING" && ready !== 1) return false;
-      if (proximityFilter === "FAR" && ready !== 0) return false;
+    const rows = activeGhosts.filter((ghost) => {
+      if (statusFilter !== "ALL" && ghost.status !== statusFilter) return false;
       if (query && !`${ghost.name} ${ghost.side} ${reasonFor(ghost)}`.toLowerCase().includes(query)) return false;
       return true;
     });
     return rows.sort((left, right) => {
-      if (sortBy === "CAPITAL") return capitalValue(right) - capitalValue(left);
-      if (sortBy === "EXPIRY") return new Date(left.expiresAt).getTime() - new Date(right.expiresAt).getTime();
-      if (sortBy === "RECENT") return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
       return Number(right.triggerProximity) - Number(left.triggerProximity) || new Date(left.expiresAt).getTime() - new Date(right.expiresAt).getTime();
     });
-  }, [actionFilter, proximityFilter, search, sortBy, statusFilter, workspace.frame, workspace.ghosts]);
+  }, [activeGhosts, search, statusFilter, workspace.frame]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  useEffect(() => setPage(1), [actionFilter, proximityFilter, search, sortBy, statusFilter]);
+  useEffect(() => setPage(1), [search, statusFilter]);
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const groups = [
     { id: "WATCHING", title: "Watching now", description: "Evaluating every complete frame", ghosts: visible.filter((ghost) => ghost.status === "WATCHING") },
     { id: "PAUSED", title: "Paused safely", description: "Capital stays controlled while monitoring is stopped", ghosts: visible.filter((ghost) => ghost.status === "PAUSED") },
     { id: "DRAFT", title: "Ready to start", description: "Reviewed drafts with no capital reserved", ghosts: visible.filter((ghost) => ghost.status === "DRAFT") },
-    { id: "TERMINAL", title: "Finished", description: "Filled, cancelled, expired, or failed outcomes", ghosts: visible.filter((ghost) => terminalStatuses.includes(ghost.status)) },
   ];
-  const active = workspace.ghosts.filter((ghost) => ["WATCHING", "PAUSED"].includes(ghost.status));
-  const closest = [...active].sort((left, right) => Number(right.triggerProximity) - Number(left.triggerProximity))[0];
-  const reservedValue = workspace.ghosts.reduce((total, ghost) => total + capitalValue(ghost), 0);
-  const nextExpiry = [...workspace.ghosts.filter((ghost) => !terminalStatuses.includes(ghost.status))].sort((left, right) => new Date(left.expiresAt).getTime() - new Date(right.expiresAt).getTime())[0];
-  const filtersActive = statusFilter !== "ALL" || actionFilter !== "ALL" || proximityFilter !== "ALL" || search.length > 0;
+  const filtersActive = statusFilter !== "ALL" || search.length > 0;
 
   useEffect(() => {
     try {
-      const stored = JSON.parse(window.sessionStorage.getItem("triggerlane:trigger-filters:v1") ?? "null") as { statusFilter?: typeof statusFilter; actionFilter?: typeof actionFilter; proximityFilter?: typeof proximityFilter; sortBy?: typeof sortBy; search?: string } | null;
+      const stored = JSON.parse(window.sessionStorage.getItem("triggerlane:trigger-filters:v1") ?? "null") as { statusFilter?: typeof statusFilter; search?: string } | null;
       if (stored) {
-        if (["ALL", "WATCHING", "PAUSED", "DRAFT", "TERMINAL"].includes(stored.statusFilter ?? "")) setStatusFilter(stored.statusFilter!);
-        if (["ALL", "BUY", "SELL"].includes(stored.actionFilter ?? "")) setActionFilter(stored.actionFilter!);
-        if (["ALL", "NEAR", "BUILDING", "FAR"].includes(stored.proximityFilter ?? "")) setProximityFilter(stored.proximityFilter!);
-        if (["READINESS", "CAPITAL", "EXPIRY", "RECENT"].includes(stored.sortBy ?? "")) setSortBy(stored.sortBy!);
+        if (["ALL", "WATCHING", "PAUSED", "DRAFT"].includes(stored.statusFilter ?? "")) setStatusFilter(stored.statusFilter!);
         if (typeof stored.search === "string") setSearch(stored.search);
       }
     } catch {
@@ -974,32 +956,23 @@ function GhostsView({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     if (!filtersRestored) return;
-    window.sessionStorage.setItem("triggerlane:trigger-filters:v1", JSON.stringify({ statusFilter, actionFilter, proximityFilter, sortBy, search }));
-  }, [actionFilter, filtersRestored, proximityFilter, search, sortBy, statusFilter]);
+    window.sessionStorage.setItem("triggerlane:trigger-filters:v1", JSON.stringify({ statusFilter, search }));
+  }, [filtersRestored, search, statusFilter]);
 
   return (
     <main className="page-view ghosts-command-page">
-      <div className="page-title"><div><span className="eyebrow">AUTOMATION COMMAND CENTER</span><h1>Your triggers</h1><p>See what is closest to acting, why each trigger is waiting, and exactly how much virtual capital it controls.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
+      <div className="page-title"><div><span className="eyebrow">TRIGGERS</span><h1>Your triggers</h1><p>See what is running, what it is waiting for, and what you can do next.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
+      <TriggerSectionNav active="active" />
 
       {workspace.frame.completeness !== "COMPLETE" && <div className="ghosts-stale-warning" role="alert"><Warning size={19} /><div><b>Fresh evaluation is paused</b><span>{workspace.frame.completeness === "STALE" ? "The current market frame is stale." : "The current market frame is incomplete."} Triggers will not act until one complete frame is stored.</span></div></div>}
 
-      <section className="ghost-command-summary" aria-label="Trigger command summary">
-        <div className="closest-ghost"><span>CLOSEST TO ACTING</span>{closest ? <><a href={`/ghost/${closest.id}`}>{closest.name}<ArrowRight size={17} /></a><p>{reasonFor(closest)}</p></> : <><b>No trigger is watching</b><p>Start a draft when you are ready.</p></>}</div>
-        <div><span>WATCHING</span><b>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length}</b><small>evaluating now</small></div>
-        <div><span>RESERVED VALUE</span><b>${money.format(reservedValue)}</b><small>simulated USDC</small></div>
-        <div><span>NEXT DEADLINE</span><b>{nextExpiry ? expiryDistance(nextExpiry.expiresAt) : "None"}</b><small>{nextExpiry ? nextExpiry.name : "no active triggers"}</small></div>
-      </section>
-
       <section className="ghost-command-controls" aria-label="Filter and sort triggers">
         <label className="ghost-search">Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or waiting reason" /></label>
-        <div className="status-filter" role="group" aria-label="Status filter">{(["ALL", "WATCHING", "PAUSED", "DRAFT", "TERMINAL"] as const).map((status) => <button aria-pressed={statusFilter === status} className={statusFilter === status ? "active" : ""} key={status} onClick={() => setStatusFilter(status)}>{status === "ALL" ? "All states" : status.charAt(0) + status.slice(1).toLowerCase()}</button>)}</div>
-        <label>Action<select value={actionFilter} onChange={(event) => setActionFilter(event.target.value as typeof actionFilter)}><option value="ALL">All actions</option><option value="BUY">Buy</option><option value="SELL">Sell</option></select></label>
-        <label>Trigger distance<select value={proximityFilter} onChange={(event) => setProximityFilter(event.target.value as typeof proximityFilter)}><option value="ALL">Any distance</option><option value="NEAR">Near, 2+ ready</option><option value="BUILDING">Building, 1 ready</option><option value="FAR">Far, 0 ready</option></select></label>
-        <label>Sort<select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}><option value="READINESS">Closest first</option><option value="CAPITAL">Most capital</option><option value="EXPIRY">Soonest deadline</option><option value="RECENT">Recently changed</option></select></label>
-        {filtersActive && <button className="reset-filters" onClick={() => { setStatusFilter("ALL"); setActionFilter("ALL"); setProximityFilter("ALL"); setSearch(""); }}><X size={15} />RESET</button>}
+        <div className="status-filter" role="group" aria-label="Status filter">{(["ALL", "WATCHING", "PAUSED", "DRAFT"] as const).map((status) => <button aria-pressed={statusFilter === status} className={statusFilter === status ? "active" : ""} key={status} onClick={() => setStatusFilter(status)}>{status === "ALL" ? "All active" : status.charAt(0) + status.slice(1).toLowerCase()}</button>)}</div>
+        {filtersActive && <button className="reset-filters" onClick={() => { setStatusFilter("ALL"); setSearch(""); }}><X size={15} />RESET</button>}
       </section>
 
-      {workspace.ghosts.length === 0 ? <div className="empty-state ghost-command-empty"><BrandIcon size={42} weight="duotone" /><h2>Your first trigger starts with a moment</h2><p>Choose what must be true, decide how much virtual capital it may use, then let Triggerlane watch.</p><a href="/trade">BUILD YOUR FIRST TRIGGER<ArrowRight size={15} /></a></div> : filtered.length === 0 ? <div className="empty-state ghost-command-empty"><SlidersHorizontal size={38} /><h2>No triggers match these filters</h2><p>Try another state, action, trigger distance, or search term.</p><button onClick={() => { setStatusFilter("ALL"); setActionFilter("ALL"); setProximityFilter("ALL"); setSearch(""); }}>SHOW ALL TRIGGERS</button></div> : <div className="ghost-state-groups">{groups.filter((group) => group.ghosts.length > 0).map((group) => <section className={`ghost-state-band state-${group.id.toLowerCase()}`} aria-labelledby={`state-${group.id}`} key={group.id}><header><div><span>{group.ghosts.length}</span><div><h2 id={`state-${group.id}`}>{group.title}</h2><p>{group.description}</p></div></div><b>{group.id}</b></header><div className="ghost-command-rows">{group.ghosts.map((ghost) => {
+      {activeGhosts.length === 0 ? <div className="empty-state ghost-command-empty"><BrandIcon size={42} weight="duotone" /><h2>No active triggers</h2><p>Build a trigger when there is a market moment you want watched.</p><a href="/trade">BUILD A TRIGGER<ArrowRight size={15} /></a></div> : filtered.length === 0 ? <div className="empty-state ghost-command-empty"><SlidersHorizontal size={38} /><h2>No triggers match</h2><p>Try another state or search term.</p><button onClick={() => { setStatusFilter("ALL"); setSearch(""); }}>SHOW ALL TRIGGERS</button></div> : <div className="ghost-state-groups">{groups.filter((group) => group.ghosts.length > 0).map((group) => <section className={`ghost-state-band state-${group.id.toLowerCase()}`} aria-labelledby={`state-${group.id}`} key={group.id}><header><div><span>{group.ghosts.length}</span><div><h2 id={`state-${group.id}`}>{group.title}</h2><p>{group.description}</p></div></div><b>{group.id}</b></header><div className="ghost-command-rows">{group.ghosts.map((ghost) => {
         const summary = ghostStateSummary(ghost, workspace.frame);
         const action = `${ghost.side} ${ghost.amountType === "USDC" ? `${quantity.format(Number(ghost.amount))} USDC` : `${quantity.format(Number(ghost.amount))}% SOL`}`;
         const evidence = ghost.status === "FILLED" ? "Receipt stored" : ["CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "Outcome stored" : expiryDistance(ghost.expiresAt);
@@ -1045,7 +1018,7 @@ function PortfolioView({ workspace, market }: { workspace: Workspace; market?: M
 
   return (
     <main className="page-view portfolio-page">
-      <div className="page-title portfolio-title"><div><span className="eyebrow">CAPITAL CONTROL</span><h1>Your virtual portfolio</h1><p>See what you own, what remains available, and exactly which trigger controls every reserved amount.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
+      <div className="page-title portfolio-title"><div><span className="eyebrow">PORTFOLIO</span><h1>Your virtual portfolio</h1><p>Your balances and the capital currently reserved by triggers.</p></div><a className="new-ghost" href="/trade"><Plus size={17} />BUILD A TRIGGER</a></div>
 
       <section className="portfolio-provenance" aria-label="Portfolio data provenance"><span><i />{workspace.portfolio.dataMode} MARKET MARK</span><b>VIRTUAL BALANCES · ACCOUNT {workspace.portfolio.generation}</b><small>{market?.price.value == null ? "Current mark unavailable; committed virtual quantities remain unchanged" : `Display value marked from ${market.provider} snapshot ${market.snapshotId?.slice(0, 12) ?? "unavailable"} at $${money.format(Number(market.price.value))} / SOL`}</small></section>
 
@@ -1087,7 +1060,7 @@ function PortfolioView({ workspace, market }: { workspace: Workspace; market?: M
       <section className="ledger-section" aria-labelledby="ledger-title">
         <header><div><span className="eyebrow">IMMUTABLE LEDGER</span><h2 id="ledger-title">The numbers behind the numbers</h2><p>Every balance movement is stored as a transaction. Credits and debits below reconstruct the owned balances above.</p></div><div className="ledger-filters" role="group" aria-label="Filter ledger by asset">{(["ALL", "SOL", "USDC"] as const).map((asset) => <button className={ledgerAsset === asset ? "active" : ""} aria-pressed={ledgerAsset === asset} key={asset} onClick={() => { setLedgerAsset(asset); setLedgerPage(1); }}>{asset === "ALL" ? "All entries" : asset}</button>)}</div></header>
         <div className="reconciliation-strip"><div><span>REBUILT SOL</span><b>{quantity.format(rebuilt.SOL)} SOL</b></div><i /><div><span>REBUILT USDC</span><b>{quantity.format(rebuilt.USDC)} USDC</b></div><i /><div><span>BALANCE CHECK</span><b>{reconciled ? "EXACT MATCH" : "REVIEW NEEDED"}</b></div></div>
-        <div className="ledger-list">{visibleLedger.map((transaction) => <article className="ledger-row" key={transaction.id}><div className={`ledger-type ledger-${transaction.type.toLowerCase()}`}><span>{transaction.type === "SEED" ? "01" : "TX"}</span><div><b>{transaction.ghostName ?? "Initial virtual deposit"}</b><small>{transaction.type} · {dateTime(transaction.createdAt)}</small></div></div><div className="ledger-movements">{transaction.entries.map((entry) => <span className={Number(entry.amount) >= 0 ? "credit" : "debit"} key={entry.id}><b>{Number(entry.amount) >= 0 ? "+" : ""}{quantity.format(Number(entry.amount))} {entry.asset}</b><small>{entry.type.replaceAll("_", " ")}</small></span>)}</div><div className="ledger-reference"><span>{transaction.executionId ? "SETTLEMENT EVIDENCE" : "CAPITAL ORIGIN"}</span><b>{transaction.executionId ? "Receipt + ledger" : "Initial deposit"}</b>{transaction.executionId ? <a href={`/history?item=${encodeURIComponent(`receipt:${transaction.executionId}`)}`}>OPEN RECEIPT <ArrowRight size={13} /></a> : <small>PORTFOLIO GENESIS</small>}</div><details className="ledger-trace"><summary><BracketsCurly size={15} />TRACE TRANSACTION</summary><dl><div><dt>Transaction ID</dt><dd>{transaction.id}</dd></div><div><dt>Trigger owner</dt><dd>{transaction.ghostId ?? "PORTFOLIO GENESIS"}</dd></div><div><dt>Execution record</dt><dd>{transaction.executionId ?? "NOT APPLICABLE"}</dd></div><div><dt>Stored</dt><dd>{dateTime(transaction.createdAt)}</dd></div></dl></details></article>)}</div>
+        <div className="ledger-list">{visibleLedger.map((transaction) => <article className="ledger-row" key={transaction.id}><div className={`ledger-type ledger-${transaction.type.toLowerCase()}`}><span>{transaction.type === "SEED" ? "01" : "TX"}</span><div><b>{transaction.ghostName ?? "Initial virtual deposit"}</b><small>{transaction.type} · {dateTime(transaction.createdAt)}</small></div></div><div className="ledger-movements">{transaction.entries.map((entry) => <span className={Number(entry.amount) >= 0 ? "credit" : "debit"} key={entry.id}><b>{Number(entry.amount) >= 0 ? "+" : ""}{quantity.format(Number(entry.amount))} {entry.asset}</b><small>{entry.type.replaceAll("_", " ")}</small></span>)}</div><div className="ledger-reference"><span>{transaction.executionId ? "SETTLEMENT EVIDENCE" : "CAPITAL ORIGIN"}</span><b>{transaction.executionId ? "Receipt + ledger" : "Initial deposit"}</b>{transaction.executionId ? <a href={`/ghosts?view=past&item=${encodeURIComponent(`receipt:${transaction.executionId}`)}`}>OPEN RECEIPT <ArrowRight size={13} /></a> : <small>PORTFOLIO GENESIS</small>}</div><details className="ledger-trace"><summary><BracketsCurly size={15} />TRACE TRANSACTION</summary><dl><div><dt>Transaction ID</dt><dd>{transaction.id}</dd></div><div><dt>Trigger owner</dt><dd>{transaction.ghostId ?? "PORTFOLIO GENESIS"}</dd></div><div><dt>Execution record</dt><dd>{transaction.executionId ?? "NOT APPLICABLE"}</dd></div><div><dt>Stored</dt><dd>{dateTime(transaction.createdAt)}</dd></div></dl></details></article>)}</div>
         {filteredLedger.length > pageSize && <nav className="ghost-pagination" aria-label="Ledger pages"><span>Showing {(currentLedgerPage - 1) * pageSize + 1}-{Math.min(currentLedgerPage * pageSize, filteredLedger.length)} of {filteredLedger.length}</span><div><button title="Previous ledger page" disabled={currentLedgerPage === 1} onClick={() => setLedgerPage((value) => Math.max(1, value - 1))}><CaretLeft size={17} /></button><b>PAGE {currentLedgerPage} OF {ledgerPages}</b><button title="Next ledger page" disabled={currentLedgerPage === ledgerPages} onClick={() => setLedgerPage((value) => Math.min(ledgerPages, value + 1))}><CaretRight size={17} /></button></div></nav>}
       </section>
     </main>
@@ -1201,7 +1174,7 @@ function HistoryView({ workspace }: { workspace: Workspace }) {
   }, [selectedKey]);
   const allExecutions = [...workspace.executions, ...(workspace.archivedExecutions ?? [])];
   const settledVolume = allExecutions.reduce((sum, item) => sum + Number(item.output_asset === "USDC" ? item.output_amount : item.input_amount), 0);
-  return <main className="page-view history-audit-page phase-27-history"><div className="page-title"><div><span className="eyebrow">EXECUTION AUDIT TRAIL</span><h1>Trigger history</h1><p>See what happened to every trigger and its capital first, then open the stored evidence behind the result.</p></div><div className="history-total"><span>SIMULATED SETTLED VALUE</span><b>${money.format(settledVolume)}</b><small>{workspace.executions.length} committed settlement{workspace.executions.length === 1 ? "" : "s"} · {workspace.executionAttempts.length} prevented</small></div></div><section className="history-summary" aria-label="History outcome summary">{(["FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button key={item} className={status === item ? "active" : ""} onClick={() => setStatus(status === item ? "ALL" : item)}><span>{item}</span><b>{outcomes.filter((outcome) => outcome.status === item).length}</b><small>{item === "FILLED" ? "ledger committed" : item === "BLOCKED" ? "capital restored" : item === "FAILED" ? "settlement failed" : "no execution"}</small></button>)}</section><section className="history-controls" aria-label="Filter history"><label>Search<input placeholder="Trigger or outcome" value={search} onChange={(event) => setSearch(event.target.value)} /></label><div className="history-status-filter" role="group" aria-label="Outcome filter">{(["ALL", "FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button aria-pressed={status === item} className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)}>{item === "ALL" ? "All outcomes" : item.charAt(0) + item.slice(1).toLowerCase()}</button>)}</div></section>{outcomes.length === 0 ? <div className="empty-state history-empty phase-27-empty"><ClockCounterClockwise size={38} /><h2>No outcomes yet</h2><p>History begins when a trigger settles, is prevented, is stopped, expires, or fails. Every result will keep its evidence here.</p><div className="history-empty-outcomes"><span><Check size={13} />SETTLED</span><span><ShieldCheck size={13} />PREVENTED</span><span><X size={13} />STOPPED</span></div><a href="/trade">RUN A TRIGGER<Play size={15} /></a></div> : visible.length === 0 ? <div className="empty-state history-empty phase-27-empty"><Database size={36} /><h2>No outcomes match</h2><p>Your evidence is still stored. Clear the current filter to return to the complete chronology.</p><button onClick={() => { setStatus("ALL"); setSearch(""); }}>SHOW ALL HISTORY</button></div> : <section className="history-ledger phase-27-ledger" aria-label="Chronological execution ledger"><header><span>OUTCOME</span><span>TRIGGER AND RESULT</span><span>CAPITAL</span><span>STORED PROOF</span><span>EXPAND</span></header>{visible.map((outcome) => {
+  return <main className="page-view history-audit-page phase-27-history"><div className="page-title"><div><span className="eyebrow">TRIGGERS</span><h1>Past triggers</h1><p>Review completed and stopped triggers. Open one only when you need its evidence.</p></div><div className="history-total"><span>SIMULATED SETTLED VALUE</span><b>${money.format(settledVolume)}</b><small>{workspace.executions.length} committed settlement{workspace.executions.length === 1 ? "" : "s"} · {workspace.executionAttempts.length} prevented</small></div></div><TriggerSectionNav active="past" /><section className="history-summary" aria-label="History outcome summary">{(["FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button key={item} className={status === item ? "active" : ""} onClick={() => setStatus(status === item ? "ALL" : item)}><span>{item}</span><b>{outcomes.filter((outcome) => outcome.status === item).length}</b><small>{item === "FILLED" ? "ledger committed" : item === "BLOCKED" ? "capital restored" : item === "FAILED" ? "settlement failed" : "no execution"}</small></button>)}</section><section className="history-controls" aria-label="Filter history"><label>Search<input placeholder="Trigger or outcome" value={search} onChange={(event) => setSearch(event.target.value)} /></label><div className="history-status-filter" role="group" aria-label="Outcome filter">{(["ALL", "FILLED", "BLOCKED", "CANCELLED", "EXPIRED", "FAILED"] as const).map((item) => <button aria-pressed={status === item} className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)}>{item === "ALL" ? "All outcomes" : item.charAt(0) + item.slice(1).toLowerCase()}</button>)}</div></section>{outcomes.length === 0 ? <div className="empty-state history-empty phase-27-empty"><ClockCounterClockwise size={38} /><h2>No past triggers</h2><p>Finished and stopped triggers will appear here.</p><a href="/trade">BUILD A TRIGGER<Play size={15} /></a></div> : visible.length === 0 ? <div className="empty-state history-empty phase-27-empty"><Database size={36} /><h2>No outcomes match</h2><p>Clear the current filter to see all past triggers.</p><button onClick={() => { setStatus("ALL"); setSearch(""); }}>SHOW ALL PAST TRIGGERS</button></div> : <section className="history-ledger phase-27-ledger" aria-label="Chronological execution ledger"><header><span>OUTCOME</span><span>TRIGGER AND RESULT</span><span>CAPITAL</span><span>STORED PROOF</span><span>EXPAND</span></header>{visible.map((outcome) => {
     const evaluations = outcome.execution ? (outcome.execution.receipt.evaluations ?? []) as Evaluation[] : outcome.attempt ? outcome.attempt.conditions.map((condition) => evaluateCondition(condition, outcome.attempt!.frame.observations[condition.metric].value)) : outcome.ghost?.evaluations ?? [];
     const ready = evaluations.filter((evaluation) => evaluation.satisfied).length;
     const settlement = outcome.execution ? `${quantity.format(Number(outcome.execution.input_amount))} ${outcome.execution.input_asset} → ${quantity.format(Number(outcome.execution.output_amount))} ${outcome.execution.output_asset}` : outcome.status === "BLOCKED" ? "PREVENTED · CAPITAL RESTORED" : outcome.status === "FAILED" ? "FAILED · NO LEDGER COMMIT" : "NOT ATTEMPTED · CAPITAL RELEASED";
@@ -1281,7 +1254,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
 
       <section className="detail-action-bar" aria-label="Trigger controls">
         <div><span className="eyebrow">AVAILABLE NOW</span><p>{["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(ghost.status) ? "This trigger is complete. Its stored evidence remains available below." : ghost.status === "DRAFT" ? "Start monitoring when the terms and capital commitment are ready." : ghost.status === "PAUSED" ? "Resume monitoring or cancel and release the reservation." : "Pause monitoring or cancel and release the reservation."}</p></div>
-        <GhostActions ghost={ghost} context="detail" />
+        <div className="detail-action-controls"><GhostActions ghost={ghost} context="detail" />{workspace.portfolio.dataMode === "DEMO" && ghost.status === "WATCHING" && <button className="detail-step-action" onClick={advanceFrame} disabled={advancingFrame}>{advancingFrame ? "ADVANCING..." : "ADVANCE SCENARIO"}<ArrowRight size={15} /></button>}</div>
       </section>
 
       <section className={`detail-observatory ${dataPaused ? "data-blocked" : ""}`} aria-labelledby="ghost-core-heading">
@@ -1320,7 +1293,7 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
         <div><span>SETTLEMENT</span><b>{settlementEvidence}</b><small>{ghost.status === "FILLED" ? "immutable simulated receipt" : "owned balances unchanged unless filled"}</small></div>
       </section>
 
-      <div className="detail-grid">
+      <details className="detail-disclosure"><summary>Evidence and activity<CaretRight size={16} /></summary><div className="detail-grid">
         <section className="detail-main">
           <div className="observation-panel">
             <div className="observation-heading"><div><span className="eyebrow">EXACT OBSERVATIONS</span><h2>The frame this trigger can prove</h2><p>Each value, target, provider, and timestamp comes from the stored evaluation frame.</p></div><div><span>{frame.mode} DATA</span><b>{frame.executionEligible ? "VIRTUAL EXECUTION ELIGIBLE" : "VIEW ONLY"}</b></div></div>
@@ -1335,12 +1308,12 @@ function GhostDetailContent({ workspace, ghost, advanceFrame, advancingFrame }: 
           <div className="terms-panel"><span className="eyebrow">CONTROLLED CAPITAL</span><div><span>Reservation status</span><b>{ghost.reservation?.status ?? "NOT RESERVED"}</b></div><div><span>Reservation ID</span><b>{ghost.reservation?.id ? ghost.reservation.id.slice(0, 12) : "NONE"}</b></div><div><span>Data mode</span><b>{frame.mode === "DEMO" ? "GUIDED SCENARIO" : "LIVE DATA"}</b></div><div><span>Frame state</span><b>{frame.completeness}</b></div><div><span>Execution mode</span><b>VIRTUAL</b></div></div>
           <div className="timeline-panel"><span className="eyebrow">WHAT HAPPENED</span>{ghost.activities?.map((activity) => <div className="timeline-item" key={activity.id}><i /><div><b>{activity.type.replaceAll("_", " ")}</b><p>{activity.message}</p><small>{dateTime(activity.created_at)}</small></div></div>)}</div>
         </aside>
-      </div>
+      </div></details>
     </main>
   );
 }
 
-export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string }) {
+export function GhostApp({ view, ghostId, triggerSection = "active" }: { view: AppView; ghostId?: string; triggerSection?: "active" | "past" }) {
   const queryClient = useQueryClient();
   const [sessionReady, setSessionReady] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -1469,7 +1442,7 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
     <AppShell>
       <header className="app-header">
         <Logo />
-        <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts">Triggers{workspace.ghosts.some((ghost) => ghost.status === "WATCHING") && <span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length}</span>}</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio">Portfolio</a><a className={view === "history" ? "active" : ""} href="/history">History</a><a className={view === "discover" ? "active" : ""} href="/discover">Discover</a></nav>
+        <nav><a className={view === "trade" ? "active" : ""} href="/trade">Trade</a><a className={view === "ghosts" || view === "detail" || view === "history" ? "active" : ""} href="/ghosts">Triggers{workspace.ghosts.some((ghost) => ghost.status === "WATCHING") && <span>{workspace.ghosts.filter((ghost) => ghost.status === "WATCHING").length}</span>}</a><a className={view === "discover" ? "active" : ""} href="/discover">Ideas</a></nav>
         <div className="header-tools">
           <button ref={environmentButtonRef} className="environment-button" aria-label="Open paper trading settings" aria-expanded={connectionsOpen} aria-controls="simulation-popover" onClick={() => { setConnectionsOpen((value) => !value); setAccountOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><i /><span>PAPER TRADING</span><CaretRight size={14} /></button>
           <button ref={accountButtonRef} className="account-button" aria-label="Open account" aria-expanded={accountOpen} aria-controls="account-popover" onClick={() => { setAccountOpen((value) => !value); setConnectionsOpen(false); setClearConfirmationOpen(false); setOnboardingOpen(false); }}><UserCircle size={17} /><span className="account-label">ACCOUNT</span><CaretRight size={14} /></button>
@@ -1485,16 +1458,15 @@ export function GhostApp({ view, ghostId }: { view: AppView; ghostId?: string })
         <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Execution</dt><dd>VIRTUAL</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
         <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>VIRTUAL · AVAILABLE</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
       </motion.div>}</AnimatePresence>
-      <AnimatePresence>{accountOpen && <motion.div ref={accountDialogRef} tabIndex={-1} id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">BROWSER-BOUND ACCOUNT</span><strong>{workspace.identity.label}</strong><small>{workspace.identity.id.slice(0, 18)}...</small><p className="account-boundary">This account is available only in this browser. There is no sign-in or recovery if its access cookie is removed.</p><dl className="account-access"><div><dt>ACCESS EXPIRES</dt><dd>{sessionExpiresAt ? dateTime(sessionExpiresAt) : "UNKNOWN"}</dd></div><div><dt>DATA STORAGE</dt><dd>SERVER STORED</dd></div></dl><div className="account-balances"><span>USDC <b>{quantity.format(Number(workspace.portfolio.balances.USDC.quantity))}</b></span><span>SOL <b>{quantity.format(Number(workspace.portfolio.balances.SOL.quantity))}</b></span></div><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button>{!clearConfirmationOpen ? <button className="account-danger" onClick={() => setClearConfirmationOpen(true)}><Power size={16} />CLEAR BROWSER ACCESS</button> : <div className="account-clear-confirm" role="alert"><b>End access from this browser?</b><p>Your stored paper data will not be deleted, but this browser cannot recover or reopen it afterward.</p><div><button onClick={() => setClearConfirmationOpen(false)}>KEEP ACCESS</button><button className="account-danger" disabled={clearSession.isPending} onClick={() => clearSession.mutate()}>{clearSession.isPending ? "CLEARING..." : "END ACCESS"}</button></div>{clearSession.error && <small role="alert">{clearSession.error instanceof Error ? clearSession.error.message : "Access could not be cleared."}</small>}</div>}</motion.div>}</AnimatePresence>
+      <AnimatePresence>{accountOpen && <motion.div ref={accountDialogRef} tabIndex={-1} id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><div className="account-capital" aria-label="Account balances"><header><span>BALANCES</span><small>AVAILABLE / RESERVED</small></header>{(["USDC", "SOL"] as const).map((asset) => { const balance = workspace.portfolio.balances[asset]; return <div className="account-balance-row" key={asset}><b>{asset}</b><span>{quantity.format(Number(balance.available))}</span><small>{quantity.format(Number(balance.reserved))} reserved</small></div>; })}</div><details className="account-details"><summary>Account details<CaretRight size={14} /></summary><p className="account-boundary">This account is available only in this browser. There is no sign-in or recovery if its access cookie is removed.</p><dl className="account-access"><div><dt>ACCESS EXPIRES</dt><dd>{sessionExpiresAt ? dateTime(sessionExpiresAt) : "UNKNOWN"}</dd></div><div><dt>DATA STORAGE</dt><dd>SERVER STORED</dd></div></dl><small>{workspace.identity.id.slice(0, 18)}...</small></details><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button>{!clearConfirmationOpen ? <button className="account-danger" onClick={() => setClearConfirmationOpen(true)}><Power size={16} />CLEAR BROWSER ACCESS</button> : <div className="account-clear-confirm" role="alert"><b>End access from this browser?</b><p>Your stored paper data will not be deleted, but this browser cannot recover or reopen it afterward.</p><div><button onClick={() => setClearConfirmationOpen(false)}>KEEP ACCESS</button><button className="account-danger" disabled={clearSession.isPending} onClick={() => clearSession.mutate()}>{clearSession.isPending ? "CLEARING..." : "END ACCESS"}</button></div>{clearSession.error && <small role="alert">{clearSession.error instanceof Error ? clearSession.error.message : "Access could not be cleared."}</small>}</div>}</motion.div>}</AnimatePresence>
       {view === "trade" && <TradeView workspace={workspace} market={market} marketLoading={marketQuery.isPending || marketQuery.isFetching && !market} interval={marketInterval} onInterval={setMarketInterval} capabilities={capabilities} />}
-      {view === "ghosts" && <GhostsView workspace={workspace} />}
+      {view === "ghosts" && (triggerSection === "past" ? <HistoryView workspace={workspace} /> : <GhostsView workspace={workspace} />)}
       {view === "portfolio" && <PortfolioView workspace={workspace} market={market} />}
       {view === "history" && <HistoryView workspace={workspace} />}
-      {view === "discover" && <DiscoverView workspace={workspace} />}
+      {view === "discover" && <IdeasView />}
       {view === "detail" && ghostId && <DetailView workspace={workspace} ghostId={ghostId} />}
-      <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "portfolio" ? "active" : ""} href="/portfolio"><Pulse size={18} />Portfolio</a><a className={view === "history" ? "active" : ""} href="/history"><ClockCounterClockwise size={18} />History</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Discover</a></nav>
+      <nav className="mobile-nav" aria-label="Mobile navigation"><a className={view === "trade" ? "active" : ""} href="/trade"><ChartLineUp size={18} />Trade</a><a className={view === "ghosts" || view === "detail" || view === "history" ? "active" : ""} href="/ghosts"><BrandIcon size={18} />Triggers</a><a className={view === "discover" ? "active" : ""} href="/discover"><SlidersHorizontal size={18} />Ideas</a></nav>
       <SandboxDisclaimer />
-      <footer className="system-footer"><span><i className="green" />{modeIsLive ? "LIVE DATA · VIRTUAL EXECUTION" : "GUIDED SCENARIO · ISOLATED"}</span><span>SOL-PERP/USDC</span><span>SNAPSHOT {market?.snapshotId?.slice(0, 8) ?? "PENDING"}</span><span>{capabilities.environment.toUpperCase()}</span><span className="rialo-footer"><BrandIcon size={13} />RIALO TARGET · {capabilities.features.rialo ? "CONFIGURED" : "NOT CONFIGURED"}</span></footer>
     </AppShell>
   );
 }

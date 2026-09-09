@@ -60,6 +60,8 @@ Paginated collection APIs are available at `/api/ghost-pages`, `/api/history-pag
 
 ## First Deployment Check
 
+Before deployment, run `npm run test:container` on a Docker-capable machine. It builds the root image, starts the production topology through port 3000, verifies readiness and production cookie attributes, creates and reserves a trigger, restarts against the same volume, settles it, restarts again, and confirms the session, trigger, reservation, receipt, and balances remain available. The harness removes its disposable container, image, and volume after the run.
+
 1. Open `/health/ready` and confirm the database reports `ready`.
 2. Open the landing page and start an anonymous paper-trading session.
 3. Create and start a one-condition trigger.

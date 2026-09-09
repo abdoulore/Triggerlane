@@ -1,5 +1,7 @@
 # Data Providers
 
+> Phase 41 verification uses deterministic provider fixtures in CI. Live Hyperliquid access remains a separate smoke check and is never required to make the release suite pass.
+
 ## Gate 0 decision
 
 **Decision:** Fresh Hyperliquid observations may drive virtual paper execution. Guided Scenario data remains deterministic and isolated for teaching, replay, and tests.

@@ -26,7 +26,7 @@ async function seedGhostCommandCenter(page: Page) {
   await page.goto("/ghosts");
   await expect(page.getByRole("heading", { name: "Your triggers" })).toBeVisible();
   await page.evaluate(async () => {
-    const base = "http://127.0.0.1:8787";
+    const base = "";
     const defaults = {
       side: "SELL",
       amount: "25",
@@ -74,7 +74,7 @@ async function seedPortfolio(page: Page) {
   await page.goto("/portfolio");
   await expect(page.getByRole("heading", { name: "Your virtual portfolio" })).toBeVisible();
   await page.evaluate(async () => {
-    const base = "http://127.0.0.1:8787";
+    const base = "";
     const call = async (path: string, body?: unknown) => {
       const headers: Record<string, string> = { "idempotency-key": crypto.randomUUID() };
       if (body != null) headers["content-type"] = "application/json";
@@ -97,10 +97,10 @@ async function seedPortfolio(page: Page) {
 }
 
 async function seedHistoryAudit(page: Page) {
-  await page.goto("/history");
-  await expect(page.getByRole("heading", { name: "Trigger history" })).toBeVisible();
+  await page.goto("/ghosts?view=past");
+  await expect(page.getByRole("heading", { name: "Past triggers", exact: true })).toBeVisible();
   await page.evaluate(async () => {
-    const base = "http://127.0.0.1:8787";
+    const base = "";
     const call = async (path: string, body?: unknown) => {
       const headers: Record<string, string> = { "idempotency-key": crypto.randomUUID() };
       if (body != null) headers["content-type"] = "application/json";
@@ -124,6 +124,19 @@ async function seedHistoryAudit(page: Page) {
   await expect(page.getByText("Blocked Audit", { exact: true })).toBeVisible();
 }
 
+async function expectCanvasContributesVisiblePixels(page: Page, selector: string) {
+  const canvas = page.locator(selector);
+  await expect(canvas).toBeVisible();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  const visible = await page.screenshot({ clip: box!, animations: "disabled" });
+  await canvas.evaluate((element) => { element.style.visibility = "hidden"; });
+  const hidden = await page.screenshot({ clip: box!, animations: "disabled" });
+  await canvas.evaluate((element) => { element.style.visibility = ""; });
+  expect(visible.equals(hidden), `${selector} should alter its rendered screen region`).toBe(false);
+}
+
 test("landing teaches the product through the real 3D Signal Engine", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
@@ -131,14 +144,7 @@ test("landing teaches the product through the real 3D Signal Engine", async ({ p
   await expect(primary).toHaveAttribute("href", "/trade");
   const canvas = page.locator('canvas[data-scene="signal-engine"]');
   await expect(canvas).toBeVisible();
-  const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
-    const context = element.getContext("webgl2") ?? element.getContext("webgl");
-    if (!context) return 0;
-    const sample = new Uint8Array(4 * 24 * 24);
-    context.readPixels(0, 0, 24, 24, context.RGBA, context.UNSIGNED_BYTE, sample);
-    return sample.reduce((total, value) => total + value, 0);
-  });
-  expect(pixels).toBeGreaterThan(0);
+  await expectCanvasContributesVisiblePixels(page, 'canvas[data-scene="signal-engine"]');
   const firstViewport = await page.evaluate(() => ({
     primaryBottom: document.querySelector(".landing-primary")!.getBoundingClientRect().bottom,
     proofTop: document.querySelector(".capability-proof")!.getBoundingClientRect().top,
@@ -180,25 +186,32 @@ test("landing remains framed and nonblank on mobile", async ({ page }, testInfo)
 test("creates, arms, settles, and receipts one Ghost exactly once", async ({ page }) => {
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "SOL PERP / USDC" })).toBeVisible();
-  await expect(page.getByText("GUIDED SCENARIO · ISOLATED")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Market overview" })).toContainText("EVIDENCE");
-  await expect(page.getByRole("region", { name: "Capital commitment preview" })).toContainText("10 SOL");
-  await expect(page.getByLabel(/Trigger lifecycle:/)).toContainText("WATCHING");
-  await expect(page.locator(".waiting-reason")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open paper trading settings" })).toBeVisible();
+  await expect(page.getByLabel("Trigger summary and capital commitment")).toContainText("10 SOL");
 
   await page.getByRole("button", { name: "SAVE TRIGGER" }).click();
   await expect(page.getByRole("button", { name: "START WATCHING" })).toBeVisible();
   await page.getByRole("button", { name: "START WATCHING" }).click();
-  await expect(page.getByText("1 ACTIVE TRIGGERS")).toBeVisible();
-  await expect(page.locator("#portfolio").getByText("$2,584.00", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const ghosts = await (await fetch("/api/ghosts", { credentials: "include" })).json() as Array<{ status: string }>;
+    return ghosts[0]?.status;
+  })).toBe("WATCHING");
+  await page.getByRole("link", { name: /SOL profit lock/ }).click();
+  const triggerDetailPath = new URL(page.url()).pathname;
 
-  for (let step = 0; step < 4; step += 1) {
-    await page.getByRole("button", { name: "ADVANCE SCENARIO" }).click();
+  for (let step = 0; step < 8; step += 1) {
+    const status = await page.evaluate(async () => (await (await fetch(location.pathname.replace("/ghost/", "/api/ghosts/"), { credentials: "include" })).json() as { status: string }).status);
+    if (status === "FILLED") break;
+    const advance = page.getByRole("button", { name: "ADVANCE SCENARIO" });
+    if (!(await advance.isVisible())) { await page.waitForTimeout(250); continue; }
+    await advance.click();
+    await page.waitForTimeout(250);
   }
 
-  await expect(page.getByRole("status").filter({ hasText: "TRIGGER FILLED" })).toBeVisible();
-  await page.getByRole("button", { name: "ADVANCE SCENARIO" }).click();
-  await page.getByRole("link", { name: "History" }).click();
+  await expect(page.locator(".detail-heading")).toContainText("FILLED");
+  await page.evaluate(async () => { await fetch("/api/demo/step", { method: "POST", credentials: "include" }); });
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await page.getByRole("link", { name: "Past" }).click();
 
   const settlement = page.locator(".history-audit-row").filter({ hasText: "SOL profit lock" });
   await expect(settlement).toHaveCount(1);
@@ -210,19 +223,19 @@ test("creates, arms, settles, and receipts one Ghost exactly once", async ({ pag
   await expect(page.getByText("FRAME PROVENANCE")).toBeVisible();
   await expect(page.getByText("16 bps")).toBeVisible();
   await page.getByRole("button", { name: "Close receipt" }).click();
-  await page.goto("/ghosts");
-  await page.getByTitle("Open Trigger").first().click();
-  await expect(page.getByLabel("Stored trigger evidence")).toContainText("Receipt and ledger stored");
-  await expect(page.getByRole("heading", { name: "One action, fully accounted for" })).toBeVisible();
-  await expect(page.getByText("Quote model", { exact: true })).toBeVisible();
-  await expect(page.getByText("Ledger transaction", { exact: true })).toBeVisible();
+  await page.goto(triggerDetailPath);
+  const evidence = page.getByText("Evidence and activity", { exact: true });
+  await expect(evidence).toBeVisible();
+  await evidence.click();
+  await expect(page.getByRole("table", { name: "Exact condition observations" })).toBeVisible();
+  await expect(page.locator(".timeline-panel")).toContainText("FILLED");
 });
 
 test("Ghost Detail renders a real data-driven 3D core and truthful lifecycle", async ({ page }, testInfo) => {
   await openWatchingGhostDetail(page);
   await expect(page.getByRole("heading", { name: /parts of the moment|has not reached|whole moment/i })).toBeVisible();
+  await page.getByText("Evidence and activity", { exact: true }).click();
   await expect(page.getByRole("table", { name: "Exact condition observations" }).getByRole("row")).toHaveCount(1);
-  await expect(page.getByLabel("Stored trigger evidence")).toBeVisible();
   await expect(page.locator(".detail-current-answer")).toContainText(/Current|must|wait|ready/i);
   const answerFirst = await page.evaluate(() => {
     const answer = document.querySelector(".observatory-brief")!;
@@ -233,21 +246,9 @@ test("Ghost Detail renders a real data-driven 3D core and truthful lifecycle", a
 
   const canvas = page.locator('canvas[data-scene="ghost-core"]');
   await expect(canvas).toBeVisible();
-  const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
-    const context = element.getContext("webgl2") ?? element.getContext("webgl");
-    if (!context) return 0;
-    const sample = new Uint8Array(4 * 28 * 28);
-    context.readPixels(0, 0, 28, 28, context.RGBA, context.UNSIGNED_BYTE, sample);
-    return sample.reduce((total, value) => total + value, 0);
-  });
-  expect(pixels).toBeGreaterThan(0);
+  await expectCanvasContributesVisiblePixels(page, 'canvas[data-scene="ghost-core"]');
 
-  const lifecycle = page.getByRole("slider", { name: "Inspect trigger lifecycle" });
-  await expect(lifecycle).toHaveAttribute("max", "1");
-  await lifecycle.fill("0");
-  await expect(page.getByText("Viewing DRAFT. Actual status is WATCHING.")).toBeVisible();
-  await page.getByRole("button", { name: "WATCHING" }).click();
-  await expect(page.getByText("Showing the current stored status: WATCHING.")).toBeVisible();
+  await expect(page.locator(".lifecycle-inspector")).toBeHidden();
 
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath("ghost-detail-desktop.png"), fullPage: false });
@@ -262,14 +263,7 @@ test("Ghost Detail keeps its 3D meaning and framing on mobile", async ({ page },
   await expect(page.locator(".detail-current-answer")).toBeVisible();
   const canvas = page.locator('canvas[data-scene="ghost-core"]');
   await expect(canvas).toBeVisible();
-  const pixels = await canvas.evaluate((element: HTMLCanvasElement) => {
-    const context = element.getContext("webgl2") ?? element.getContext("webgl");
-    if (!context) return 0;
-    const sample = new Uint8Array(4 * 24 * 24);
-    context.readPixels(0, 0, 24, 24, context.RGBA, context.UNSIGNED_BYTE, sample);
-    return sample.reduce((total, value) => total + value, 0);
-  });
-  expect(pixels).toBeGreaterThan(0);
+  await expectCanvasContributesVisiblePixels(page, 'canvas[data-scene="ghost-core"]');
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
   const mobileOrder = await page.evaluate(() => {
@@ -299,7 +293,7 @@ test("Live Data remains available for virtual execution", async ({ page }) => {
   await page.goto("/trade");
   await page.getByRole("button", { name: "Open paper trading settings" }).click();
   await page.getByRole("dialog", { name: "Paper trading settings" }).getByRole("button", { name: "LIVE DATA" }).click();
-  await expect(page.getByText("LIVE DATA · VIRTUAL EXECUTION")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Market overview" })).toContainText("CURRENT MARK PRICE");
   await expect(page.getByRole("button", { name: "ADVANCE SCENARIO" })).toBeHidden();
 });
 
@@ -307,11 +301,10 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
   await page.goto("/trade");
   await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
   await expect(page.getByText(/^CURRENT (MARK PRICE|SIMULATED MARK)$/)).toBeVisible();
-  await expect(page.getByLabel("Compact Signal Engine state")).toBeVisible();
-  await expect(page.getByLabel("Capital commitment preview")).toBeVisible();
-  await expect(page.getByLabel("What happens when this trigger starts")).toBeVisible();
-  const condition = page.locator(".condition-cell").first();
-  await expect(condition.getByText("CURRENT", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Compact Signal Engine state")).toBeHidden();
+  await expect(page.getByLabel("Trigger summary and capital commitment")).toBeVisible();
+  const condition = page.locator(".builder-row").first();
+  await expect(condition.getByText(/CURRENT \$/)).toBeVisible();
   await expect(condition.getByText("TARGET", { exact: true })).toBeVisible();
 
   const typeSizes = await page.evaluate(() => {
@@ -322,9 +315,8 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
       composerTitle: size(".composer-panel .panel-heading h2"),
       composerIntro: size(".composer-intro"),
       fieldLabel: size(".field-label"),
-      conditionLabel: size(".condition-cell-top"),
-      conditionValue: size(".condition-cell .metric-value"),
-      waitingReason: size(".waiting-reason"),
+      conditionLabel: size(".condition-builder-heading"),
+      conditionValue: size(".builder-target input"),
     };
   });
   expect(typeSizes.body).toBeGreaterThanOrEqual(14);
@@ -333,8 +325,7 @@ test("Trade is legible, welcoming, and accessible on desktop", async ({ page }, 
   expect(typeSizes.composerIntro).toBeGreaterThanOrEqual(14);
   expect(typeSizes.fieldLabel).toBeGreaterThanOrEqual(12);
   expect(typeSizes.conditionLabel).toBeGreaterThanOrEqual(11);
-  expect(typeSizes.conditionValue).toBeGreaterThanOrEqual(20);
-  expect(typeSizes.waitingReason).toBeGreaterThanOrEqual(12);
+  expect(typeSizes.conditionValue).toBeGreaterThanOrEqual(14);
 
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
@@ -392,7 +383,7 @@ test("Composer supports one signal or an explicit combination", async ({ page },
   await expect(page.getByLabel("PRICE target")).toHaveCount(0);
   await page.getByRole("button", { name: /SAVE TRIGGER/ }).click();
   const saved = await page.evaluate(async () => {
-    const ghosts = await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json() as Array<{ name: string; conditions: Array<{ metric: string }> }>;
+    const ghosts = await (await fetch("/api/ghosts", { credentials: "include" })).json() as Array<{ name: string; conditions: Array<{ metric: string }> }>;
     return ghosts.find((ghost) => ghost.name === "Funding only exit")?.conditions.map((condition) => condition.metric);
   });
   expect(saved).toEqual(["FUNDING"]);
@@ -408,6 +399,7 @@ test("mobile monitoring does not overflow horizontally", async ({ page }) => {
 
 test("Replay runs complete historical frames and exposes trigger inspection", async ({ page }) => {
   await page.goto("/trade");
+  await page.getByText("Risk and advanced settings", { exact: true }).click();
   await page.getByRole("button", { name: "RUN DEMO REPLAY" }).click();
   const dialog = page.getByRole("dialog", { name: /SOL profit lock historical Replay/i });
   await expect(dialog).toBeVisible();
@@ -425,63 +417,26 @@ test("Replay runs complete historical frames and exposes trigger inspection", as
   expect(serious).toEqual([]);
 });
 
-test("Discover explains, replays, and hands off a supported strategy without arming it", async ({ page }, testInfo) => {
+test("Ideas offers concise starting points and hands one to Trade without arming it", async ({ page }, testInfo) => {
   await page.goto("/discover");
-  await expect(page.getByRole("heading", { name: "Start with a moment worth watching" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Why watch several signals?" })).toBeVisible();
-  await expect(page.getByText("Every chosen signal must be true together.")).toBeVisible();
-  const beforeCount = await page.evaluate(async () => ((await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
-  const preview = page.locator("#strategy-preview");
+  await expect(page.getByRole("heading", { name: "Find a starting point" })).toBeVisible();
+  const beforeCount = await page.evaluate(async () => ((await (await fetch("/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
+  const preview = page.locator(".idea-preview");
+  await expect(page.locator(".ideas-list > button")).toHaveCount(4);
   await expect(preview.getByRole("heading", { name: "Buy the Fear" })).toBeVisible();
-  await expect(preview.getByText("Stress alignment", { exact: true })).toBeVisible();
-  await expect(preview.getByText("ALL MUST BE TRUE IN ONE FRAME")).toBeVisible();
-  await expect(preview.locator(".lattice-condition")).toHaveCount(3);
-  await expect(preview.getByText("CAPITAL IF ARMED")).toBeVisible();
-  await expect(preview.getByText("Only you can save or start the trigger after reviewing it in Composer.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "PRICE" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "FUNDING" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "POSITION P&L" })).toBeVisible();
-
-  const typeSizes = await page.evaluate(() => ({
-    title: Number.parseFloat(getComputedStyle(document.querySelector(".page-title h1") as Element).fontSize),
-    intro: Number.parseFloat(getComputedStyle(document.querySelector(".page-title p") as Element).fontSize),
-    strategy: Number.parseFloat(getComputedStyle(document.querySelector(".strategy-feature-copy h2") as Element).fontSize),
-    body: Number.parseFloat(getComputedStyle(document.querySelector(".strategy-feature-copy > p") as Element).fontSize),
-  }));
-  expect(typeSizes.title).toBeGreaterThanOrEqual(40);
-  expect(typeSizes.intro).toBeGreaterThanOrEqual(16);
-  expect(typeSizes.strategy).toBeGreaterThanOrEqual(44);
-  expect(typeSizes.body).toBeGreaterThanOrEqual(15);
-  await page.screenshot({ path: testInfo.outputPath("discover-phase28-desktop-top.png"), fullPage: false });
-
-  await preview.getByRole("button", { name: "REPLAY LAST 24H" }).click();
-  const replay = page.getByRole("region", { name: "24 hour demo Replay result" });
-  await expect(replay.getByText("DEMO REPLAY RESULT · SYNTHETIC FRAMES")).toBeVisible();
-  await expect(replay.getByText("FRAMES CHECKED")).toBeVisible();
-  await expect(replay).toContainText("24");
-  await expect(replay).toContainText("Your Simulation did not change");
-  await expect(replay).toContainText("No trigger was created and no capital was reserved.");
-  const afterReplayCount = await page.evaluate(async () => ((await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
-  expect(afterReplayCount).toBe(beforeCount);
+  await expect(preview.getByRole("region", { name: "Idea conditions" }).locator("div")).toHaveCount(3);
+  await expect(preview).toContainText("Buy with 1,000.00 USDC");
+  await expect(page.getByText("REPLAY LAST 24H")).toHaveCount(0);
+  await expect(page.getByText("FILTER BY SIGNAL")).toHaveCount(0);
 
   await page.getByRole("button", { name: /Downside Break/i }).click();
   await expect(preview.getByRole("heading", { name: "Downside Break" })).toBeVisible();
-  await expect(preview.locator(".strategy-feature-copy").getByText("SELL SOL", { exact: true })).toBeVisible();
-  await expect(preview.getByText("Risk alignment", { exact: true })).toBeVisible();
-
-  await page.getByRole("tab", { name: "Advanced" }).click();
-  const advanced = page.locator(".advanced-boundary");
-  await expect(advanced.getByRole("heading", { name: "Advanced signals need qualified data first" })).toBeVisible();
-  await expect(advanced).toContainText("LIQUIDITY · UNSUPPORTED");
-  await expect(advanced).toContainText("TVL · UNSUPPORTED");
-  await expect(advanced).toContainText("VOLUME · UNSUPPORTED");
-  await page.getByRole("tab", { name: "Popular" }).click();
+  await expect(preview).toContainText("Sell 50% of SOL");
   await page.getByRole("button", { name: /Euphoria Exit/i }).click();
   await expect(preview.getByRole("heading", { name: "Euphoria Exit" })).toBeVisible();
-  await expect(preview.getByText("Heat alignment", { exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("discover-editorial-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("ideas-desktop.png"), fullPage: true });
 
-  await preview.getByRole("button", { name: "LOAD INTO COMPOSER FOR REVIEW" }).click();
+  await preview.getByRole("button", { name: "USE THIS SETUP" }).click();
   await expect(page).toHaveURL(/\/trade\?strategy=euphoria-exit$/);
   await expect(page.getByText("STRATEGY LOADED")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Trigger name" })).toHaveValue("Euphoria Exit");
@@ -489,53 +444,27 @@ test("Discover explains, replays, and hands off a supported strategy without arm
   await expect(page.getByRole("spinbutton", { name: "SOL position to sell %" })).toHaveValue("25");
   await expect(page.getByRole("button", { name: /SAVE TRIGGER/ })).toBeVisible();
 
-  const afterCount = await page.evaluate(async () => ((await (await fetch("http://127.0.0.1:8787/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
+  const afterCount = await page.evaluate(async () => ((await (await fetch("/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
   expect(afterCount).toBe(beforeCount);
-
   await page.goto("/discover");
-  await page.getByRole("button", { name: "Open account" }).click();
-  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "NEW HERE?" }).click();
-  const guide = page.getByRole("dialog", { name: "Learn before you build" });
-  await expect(guide).toContainText("Replay explores demo history");
-  const guideAccessibility = await new AxeBuilder({ page }).include(".onboarding-panel").withTags(["wcag2a", "wcag2aa"]).analyze();
-  expect(guideAccessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
-  await page.getByTitle("Close guide").click();
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious).toEqual([]);
 });
 
-test("Discover remains composed on a phone", async ({ page }, testInfo) => {
+test("Ideas remains focused and composed on a phone", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/discover");
-  await expect(page.getByRole("heading", { name: "Start with a moment worth watching" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Why watch several signals?" })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-top.png"), fullPage: false });
-  await expect(page.locator("#strategy-preview").getByRole("heading", { name: "Buy the Fear" })).toBeVisible();
-  await expect(page.locator(".strategy-lattice-mobile")).toBeVisible();
-  await expect(page.locator(".strategy-lattice-desktop")).toBeHidden();
-  await expect(page.locator(".mobile-lattice-signal")).toHaveCount(3);
-  await page.getByRole("button", { name: "Open account" }).click();
-  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "NEW HERE?" }).click();
-  await expect(page.getByRole("dialog", { name: "Learn before you build" })).toBeVisible();
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-guide.png"), fullPage: false });
-  await page.getByTitle("Close guide").click();
-  const preview = page.locator("#strategy-preview");
-  await preview.getByRole("button", { name: "REPLAY LAST 24H" }).click();
-  const replay = page.getByRole("region", { name: "24 hour deterministic Replay result" });
-  await replay.scrollIntoViewIfNeeded();
-  await expect(replay.getByText("Your Simulation did not change")).toBeVisible();
-  await expect(replay.getByRole("button", { name: /REVIEW BUY THE FEAR IN COMPOSER/ })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("discover-phase28-mobile-replay.png"), fullPage: false });
+  await expect(page.getByRole("heading", { name: "Find a starting point" })).toBeVisible();
+  await expect(page.locator(".ideas-list > button")).toHaveCount(4);
+  await page.getByRole("button", { name: /Price Breakout/i }).click();
+  const preview = page.locator(".idea-preview");
+  await preview.scrollIntoViewIfNeeded();
+  await expect(preview.getByRole("heading", { name: "Price Breakout" })).toBeVisible();
+  await expect(preview.getByRole("button", { name: "USE THIS SETUP" })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
-  const mobileSignalsFit = await page.locator(".mobile-lattice-signal").evaluateAll((signals) => signals.every((signal) => {
-    const box = signal.getBoundingClientRect();
-    return box.left >= 0 && box.right <= window.innerWidth;
-  }));
-  expect(mobileSignalsFit).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("discover-editorial-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("ideas-mobile.png"), fullPage: true });
 });
 
 test("contextual beginner help follows the current product task", async ({ page }) => {
@@ -551,8 +480,8 @@ test("contextual beginner help follows the current product task", async ({ page 
   }
 });
 
-test("Ghosts and History keep the welcoming reading hierarchy", async ({ page }) => {
-  for (const [path, title] of [["/ghosts", "Your triggers"], ["/history", "Trigger history"]]) {
+test("Active and Past triggers keep the welcoming reading hierarchy", async ({ page }) => {
+  for (const [path, title] of [["/ghosts", "Your triggers"], ["/ghosts?view=past", "Past triggers"]]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     const typeSizes = await page.evaluate(() => ({
@@ -566,17 +495,17 @@ test("Ghosts and History keep the welcoming reading hierarchy", async ({ page })
   }
 });
 
-test("History distinguishes settlements, blocked attempts, and stopped Ghosts", async ({ page }, testInfo) => {
+test("Past triggers distinguish settlements, blocked attempts, and stopped triggers", async ({ page }, testInfo) => {
   await seedHistoryAudit(page);
   await expect(page.locator(".history-audit-row")).toHaveCount(3);
   await expect(page.locator(".history-audit-row").filter({ hasText: "Settled Audit" })).toContainText("Trade settled and balances changed");
   await expect(page.locator(".history-audit-row").filter({ hasText: "Blocked Audit" })).toContainText("Execution prevented; capital restored");
   await expect(page.locator(".history-audit-row").filter({ hasText: "Cancelled Audit" })).toContainText("Stopped before execution");
   await expect(page.locator(".history-audit-row").first()).toHaveAttribute("aria-haspopup", "dialog");
-  await expect(page.locator(".outcome-proof")).toHaveCount(3);
-  await expect(page.locator(".history-summary").getByRole("button", { name: /FILLED 1/ })).toBeVisible();
-  await expect(page.locator(".history-summary").getByRole("button", { name: /BLOCKED 1/ })).toBeVisible();
-  await expect(page.locator(".history-summary").getByRole("button", { name: /CANCELLED 1/ })).toBeVisible();
+  await expect(page.locator(".outcome-proof").first()).toBeHidden();
+  await expect(page.getByRole("group", { name: "Outcome filter" }).getByRole("button", { name: "Filled" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Outcome filter" }).getByRole("button", { name: "Blocked" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Outcome filter" }).getByRole("button", { name: "Cancelled" })).toBeVisible();
 
   await page.getByPlaceholder("Trigger or outcome").fill("Blocked");
   await expect(page.locator(".history-audit-row")).toHaveCount(1);
@@ -619,7 +548,7 @@ test("History distinguishes settlements, blocked attempts, and stopped Ghosts", 
   await page.emulateMedia({ media: "screen" });
   await page.keyboard.press("Escape");
   await expect(receipt).toBeHidden();
-  const executionCount = await page.evaluate(async () => (await (await fetch("http://127.0.0.1:8787/api/workspace", { credentials: "include" })).json()).executions.length);
+  const executionCount = await page.evaluate(async () => (await (await fetch("/api/workspace", { credentials: "include" })).json()).executions.length);
   expect(executionCount).toBe(1);
   await page.screenshot({ path: testInfo.outputPath("history-audit-desktop.png"), fullPage: true });
 
@@ -628,14 +557,15 @@ test("History distinguishes settlements, blocked attempts, and stopped Ghosts", 
   expect(serious).toEqual([]);
 });
 
-test("History audit records remain usable on mobile", async ({ page }, testInfo) => {
+test("Past trigger audit records remain usable on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedHistoryAudit(page);
   const outcome = page.locator(".history-audit-row").filter({ hasText: "Blocked Audit" });
   await outcome.scrollIntoViewIfNeeded();
-  await expect(outcome.locator(".outcome-capital")).toBeVisible();
-  await expect(outcome.locator(".outcome-proof")).toBeVisible();
-  await expect(outcome.getByText("VIEW ATTEMPT", { exact: true })).toBeVisible();
+  await expect(outcome.locator(".outcome-story")).toBeVisible();
+  await expect(outcome.locator(".outcome-capital")).toBeHidden();
+  await expect(outcome.locator(".outcome-proof")).toBeHidden();
+  await expect(outcome).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("history-outcome-mobile.png"), fullPage: false });
   await page.getByRole("button", { name: /Blocked Audit/ }).click();
   await expect(page.getByText("Conditions qualified. Settlement was prevented.")).toBeVisible();
@@ -651,39 +581,32 @@ test("History audit records remain usable on mobile", async ({ page }, testInfo)
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
 });
 
-test("Ghost command center makes state, distance, capital, and actions scannable", async ({ page }, testInfo) => {
+test("Triggers makes state, reason, and actions scannable", async ({ page }, testInfo) => {
   await seedGhostCommandCenter(page);
   await expect(page.getByRole("heading", { name: "Watching now" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Paused safely" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ready to start" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Finished" })).toBeVisible();
-  await expect(page.locator(".closest-ghost")).toContainText("Near Ready");
-  await expect(page.locator(".ghost-signal-trace")).toHaveCount(4);
+  await expect(page.getByText("Settled Exit", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".ghost-signal-trace")).toHaveCount(3);
+  await expect(page.locator(".ghost-signal-trace").first()).toBeHidden();
   await expect(page.getByTitle("Start unavailable while status is WATCHING")).toBeDisabled();
 
   const nearRow = page.locator(".ghost-command-row").filter({ hasText: "Near Ready" });
   await expect(nearRow.locator(".ghost-command-answer")).toContainText("READY");
   await expect(nearRow.locator(".ghost-command-answer")).toContainText("Current");
-  const settledRow = page.locator(".ghost-command-row").filter({ hasText: "Settled Exit" });
-  await expect(settledRow.locator(".ghost-command-answer")).toContainText("Executed once and settled");
-  await expect(settledRow).toContainText("Receipt stored");
   await nearRow.getByTitle("Pause Trigger").click();
   await expect(page.locator(".state-paused")).toContainText("Near Ready");
   await expect(page.locator(".state-paused").filter({ hasText: "Near Ready" })).toContainText("Monitoring is paused");
 
   await page.getByRole("button", { name: "Draft", exact: true }).click();
   await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
-  await expect(page.locator(".ghost-state-bands").getByText("Near Ready", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".ghost-state-groups").getByText("Near Ready", { exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("button", { name: "Draft", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "All states" }).click();
-  await page.locator(".ghost-command-controls").getByLabel("Action").selectOption("BUY");
-  await expect(page.getByText("Buy the Dip", { exact: true })).toBeVisible();
-  await expect(page.locator(".ghost-state-bands").getByText("Settled Exit", { exact: true })).toHaveCount(0);
-  await page.locator(".ghost-command-controls").getByLabel("Action").selectOption("ALL");
+  await page.getByRole("button", { name: "All active" }).click();
   await page.getByPlaceholder("Name or waiting reason").fill("does not exist");
-  await expect(page.getByRole("heading", { name: "No triggers match these filters" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No triggers match" })).toBeVisible();
   await page.getByRole("button", { name: "SHOW ALL TRIGGERS" }).click();
   await expect(page.getByText("Near Ready", { exact: true }).first()).toBeVisible();
 
@@ -696,8 +619,7 @@ test("Ghost command center makes state, distance, capital, and actions scannable
 test("Ghost command center remains usable on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedGhostCommandCenter(page);
-  await expect(page.locator(".closest-ghost")).toContainText("Near Ready");
-  await expect(page.getByRole("button", { name: "All states" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "All active" })).toBeVisible();
   await expect(page.locator(".ghost-command-row").filter({ hasText: "Near Ready" }).locator(".ghost-command-answer")).toBeVisible();
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
@@ -717,7 +639,7 @@ test("Ghost command center paginates large lists", async ({ page }) => {
       conditions: [{ metric: "PRICE", operator: "GTE", target: "280" }, { metric: "FUNDING", operator: "GTE", target: "0.0005" }, { metric: "PNL", operator: "GTE", target: "0.1" }],
     };
     for (let index = 1; index <= 25; index += 1) {
-      const response = await fetch("http://127.0.0.1:8787/api/ghosts", { method: "POST", credentials: "include", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ ...draft, name: `Scale Ghost ${String(index).padStart(2, "0")}` }) });
+      const response = await fetch("/api/ghosts", { method: "POST", credentials: "include", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ ...draft, name: `Scale Ghost ${String(index).padStart(2, "0")}` }) });
       if (!response.ok) throw new Error(await response.text());
     }
   });
@@ -728,36 +650,22 @@ test("Ghost command center paginates large lists", async ({ page }) => {
   await expect(page.getByText("Showing 25-25 of 25")).toBeVisible();
 });
 
-test("Portfolio reconciles capital, reservations, previews, and ledger sources", async ({ page }, testInfo) => {
+test("Portfolio keeps balances and reservations clear", async ({ page }, testInfo) => {
   await seedPortfolio(page);
-  await expect(page.getByText("LEDGER RECONCILED")).toBeVisible();
-  await expect(page.getByText("EXACT MATCH")).toBeVisible();
   const equation = page.getByLabel("Capital reconciliation equation");
   await expect(equation).toBeVisible();
   const equationValues = await equation.locator("b").allTextContents();
   const parsedEquation = equationValues.map((value) => Number(value.replace(/[$,]/g, "")));
   expect(parsedEquation[0]! + parsedEquation[1]!).toBeCloseTo(parsedEquation[2]!, 2);
-  await expect(page.getByRole("heading", { name: "Where every simulated dollar sits" })).toBeVisible();
   const reservation = page.locator(".reservation-row").filter({ hasText: "Portfolio Guard" });
   await expect(reservation).toContainText("CONTROLLED NOW");
   await expect(reservation).toContainText("IF IT EXECUTED NOW");
-  await expect(reservation.getByLabel("Portfolio Guard reservation ownership")).toContainText("SIMULATED PORTFOLIO");
-  await reservation.locator(".reservation-trace summary").click();
-  await expect(reservation.locator(".reservation-trace")).toContainText("Reservation ID");
-  await expect(reservation.locator(".reservation-trace")).toContainText("Owner trigger");
-  await expect(page.locator(".ledger-row")).toHaveCount(2);
-  await page.locator(".ledger-row").filter({ hasText: "Portfolio Rebalance" }).locator(".ledger-trace summary").click();
-  await expect(page.locator(".ledger-row").filter({ hasText: "Portfolio Rebalance" }).locator(".ledger-trace")).toContainText("Execution record");
-  await expect(page.getByText("Portfolio Rebalance", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "SOL", exact: true }).click();
-  await expect(page.locator(".ledger-row")).toHaveCount(2);
-  await page.getByRole("button", { name: "USDC", exact: true }).click();
-  await expect(page.locator(".ledger-row")).toHaveCount(2);
+  await expect(reservation.locator(".reservation-trace")).toBeHidden();
   await page.getByTitle("Inspect Portfolio Guard").click();
   await expect(page).toHaveURL(/\/ghost\/[a-f0-9-]+$/);
   await page.goBack();
   await expect(page.getByRole("heading", { name: "Your virtual portfolio" })).toBeVisible();
-  await expect(page.getByText("LEDGER RECONCILED")).toBeVisible();
+  await expect(page.getByText("TOTAL SIMULATED EQUITY")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("portfolio-desktop.png"), fullPage: true });
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
@@ -769,13 +677,14 @@ test("Portfolio preserves capital hierarchy without mobile overflow", async ({ p
   await seedPortfolio(page);
   await expect(page.getByText("TOTAL SIMULATED EQUITY")).toBeVisible();
   await expect(page.getByLabel("Capital reconciliation equation")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Mobile navigation" }).getByText("Portfolio", { exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Mobile navigation" }).getByText("Portfolio", { exact: true })).toHaveCount(0);
   const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
   await page.screenshot({ path: testInfo.outputPath("portfolio-mobile.png"), fullPage: false });
   const reservation = page.locator(".reservation-row").filter({ hasText: "Portfolio Guard" });
   await reservation.scrollIntoViewIfNeeded();
-  await expect(reservation.getByLabel("Portfolio Guard reservation ownership")).toBeVisible();
+  await expect(reservation.getByText("CONTROLLED NOW", { exact: true })).toBeVisible();
+  await expect(reservation.getByTitle("Inspect Portfolio Guard")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("portfolio-reservation-mobile.png"), fullPage: false });
 });
 
@@ -822,14 +731,18 @@ test("Paper trading menu reports real system capability and closes with Escape",
   await expect(menu).toBeHidden();
 });
 
-test("mobile navigation exposes all five product pages while Account remains in the header", async ({ page }) => {
+test("mobile navigation keeps three primary pages while Account owns balances", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/trade");
   const nav = page.getByRole("navigation", { name: "Mobile navigation" });
-  for (const label of ["Trade", "Triggers", "Portfolio", "History", "Discover"]) await expect(nav.getByText(label, { exact: true })).toBeVisible();
+  for (const label of ["Trade", "Triggers", "Ideas"]) await expect(nav.getByText(label, { exact: true })).toBeVisible();
+  await expect(nav.getByText("History", { exact: true })).toHaveCount(0);
+  await expect(nav.getByText("Portfolio", { exact: true })).toHaveCount(0);
   await expect(nav.getByText("Account", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Open account" }).click();
-  await expect(page.getByRole("dialog", { name: "Account" })).toBeVisible();
+  const account = page.getByRole("dialog", { name: "Account" });
+  await expect(account).toBeVisible();
+  await expect(account.getByLabel("Account balances")).toContainText("AVAILABLE / RESERVED");
 });
 
 test("browser-bound Account explains access and requires confirmation before clearing", async ({ page }) => {
@@ -837,6 +750,7 @@ test("browser-bound Account explains access and requires confirmation before cle
   const trigger = page.getByRole("button", { name: "Open account" });
   await trigger.click();
   const account = page.getByRole("dialog", { name: "Account" });
+  await account.getByText("Account details", { exact: true }).click();
   await expect(account.getByText("This account is available only in this browser.", { exact: false })).toBeVisible();
   await expect(account.getByText("ACCESS EXPIRES", { exact: true })).toBeVisible();
   await account.getByRole("button", { name: "CLEAR BROWSER ACCESS" }).click();
@@ -850,11 +764,7 @@ test("browser-bound Account explains access and requires confirmation before cle
 
 test("Trigger Detail exposes guarded lifecycle actions", async ({ page }) => {
   await openWatchingGhostDetail(page);
-  await page.getByRole("button", { name: "DRAFT" }).click();
-  await expect(page.getByText("HISTORICAL INSPECTION")).toBeVisible();
-  await expect(page.getByText(/current stored state remains WATCHING/i)).toBeVisible();
-  await page.getByRole("button", { name: "WATCHING" }).click();
-  await expect(page.getByText("HISTORICAL INSPECTION")).toHaveCount(0);
+  await expect(page.locator(".lifecycle-inspector")).toBeHidden();
   const controls = page.getByRole("region", { name: "Trigger controls" });
   await expect(controls.getByRole("button", { name: "Pause trigger" })).toBeEnabled();
   await controls.getByRole("button", { name: "Pause trigger" }).click();
@@ -870,11 +780,11 @@ test("mobile prioritizes monitoring and keeps Composer inside common phone width
     const nav = page.getByRole("navigation", { name: "Mobile navigation" });
     await expect(nav).toBeVisible();
     await expect(page.getByRole("region", { name: "Market overview" })).toBeVisible();
-    await expect(nav.getByText("Portfolio", { exact: true })).toBeVisible();
+    await expect(nav.getByText("Portfolio", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "BUILD A TRIGGER" }).click();
     await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Close Composer" })).toBeVisible();
-    await expect(page.getByLabel("Capital commitment preview")).toBeAttached();
+    await expect(page.getByLabel("Trigger summary and capital commitment")).toBeAttached();
     const dimensions = await page.evaluate(() => {
       const sheet = document.querySelector("#trigger-composer-sheet")!.getBoundingClientRect();
       const target = document.querySelector('[aria-label="PRICE target"]')!.getBoundingClientRect();
@@ -916,19 +826,12 @@ test("Signal Engine converges three readable signals into one action", async ({ 
   await page.goto("/signal-engine");
   await expect(page.getByRole("heading", { name: "The market is still forming." })).toBeVisible();
   await expect(page.locator('canvas[data-scene="signal-engine"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: /PRICE.*284\.14/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /FUNDING.*0\.061%/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /POSITION P&L.*12\.8%/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /PRICE.*276\.40/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /FUNDING.*0\.032%/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /POSITION P&L.*7\.4%/ })).toBeVisible();
   await expect(page.getByRole("complementary", { name: "One-shot action" })).toContainText("SELL 25% SOL");
 
-  const pixels = await page.locator('canvas[data-scene="signal-engine"]').evaluate((element: HTMLCanvasElement) => {
-    const context = element.getContext("webgl2") ?? element.getContext("webgl");
-    if (!context) return 0;
-    const sample = new Uint8Array(4 * 30 * 30);
-    context.readPixels(0, 0, 30, 30, context.RGBA, context.UNSIGNED_BYTE, sample);
-    return sample.reduce((total, value) => total + value, 0);
-  });
-  expect(pixels).toBeGreaterThan(0);
+  await expectCanvasContributesVisiblePixels(page, 'canvas[data-scene="signal-engine"]');
 
   await page.getByRole("button", { name: "RUN CONVERGENCE" }).click();
   await expect(page.getByText("ACTION FIRED ONCE", { exact: true })).toBeVisible({ timeout: 8_000 });
@@ -942,8 +845,8 @@ test("Signal Engine remains framed and touch-readable on mobile", async ({ page 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/signal-engine");
   await expect(page.locator('canvas[data-scene="signal-engine"]')).toBeVisible();
-  await page.getByRole("button", { name: /FUNDING.*0\.061%/ }).click();
-  await expect(page.getByRole("button", { name: /FUNDING.*0\.061%/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /FUNDING.*0\.032%/ }).click();
+  await expect(page.getByRole("button", { name: /FUNDING.*0\.032%/ })).toHaveAttribute("aria-pressed", "true");
   const dimensions = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
   expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
   await page.screenshot({ path: testInfo.outputPath("signal-engine-mobile.png"), fullPage: false });

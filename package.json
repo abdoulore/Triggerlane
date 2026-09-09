@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,white \"npm run dev -w @ghost/api\" \"npm run dev -w @ghost/web\"",
+    "dev:e2e": "concurrently --kill-others-on-fail -n api,web -c cyan,white \"npm run dev -w @ghost/api\" \"npm run dev:e2e -w @ghost/web\"",
     "start": "concurrently --kill-others-on-fail -n api,web -c cyan,white \"npm run start -w @ghost/api\" \"npm run start -w @ghost/web\"",
     "build": "npm run build -w @ghost/domain && npm run build -w @ghost/api && npm run build -w @ghost/web",
     "test": "npm run test -w @ghost/domain && npm run test -w @ghost/api",
@@ -18,6 +19,7 @@
     "data:restore": "node scripts/pglite-volume.mjs restore",
     "test:operations": "node scripts/pglite-volume.test.mjs",
     "test:load": "tsx scripts/operations-load.mts",
+    "test:container": "node scripts/production-container-smoke.mjs",
     "check:launch": "npm run test && npm run typecheck && npm run build && npm run check:budget && npm run test:e2e",
     "typecheck": "npm run typecheck -w @ghost/domain && npm run typecheck -w @ghost/api && npm run typecheck -w @ghost/web"
   },
