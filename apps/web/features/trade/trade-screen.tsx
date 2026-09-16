@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import dynamic from "next/dynamic";
 import { useEffect, useReducer, useState } from "react";
 import { evaluateCondition, fundingAprPercent, modeledSlippageBps, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { api } from "@/lib/api";
@@ -10,6 +11,20 @@ import { isTerminal } from "@/lib/types";
 import { useLiveEvents } from "@/lib/use-live-events";
 import { AppShell } from "@/components/app-shell";
 import { Card, Chip, PrimaryButton, Row, ScrollRail, SecondaryButton, Segmented, Stat, StatStrip, ui } from "@/components/ui";
+
+/*
+ * The charting library is a canvas renderer with no server rendering to do, and
+ * it is the heaviest thing this screen would otherwise pull into its first
+ * load. Loading it on its own keeps it out of the initial bundle.
+ */
+const MarketChart = dynamic(() => import("@/components/market-chart").then((module) => module.MarketChart), {
+  ssr: false,
+  loading: () => (
+    <div style={{ height: "100%", display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "var(--type-caption)" }}>
+      Loading price history…
+    </div>
+  ),
+});
 
 const TRIGGER_COLUMNS = "1.6fr 2.4fr 0.9fr 1fr 0.7fr 0.9fr";
 const conditionOrder: Metric[] = ["PRICE", "FUNDING", "PNL"];
@@ -177,8 +192,8 @@ export function TradeScreen() {
 
       <div style={{ flexGrow: 1, display: "flex", minHeight: 0 }}>
         <section style={{ flexGrow: 1, display: "flex", flexDirection: "column", minWidth: 0, borderRight: "1px solid var(--line)" }}>
-          <div style={{ flexGrow: 1, display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "var(--type-label)" }}>
-            Price chart
+          <div style={{ flexGrow: 1, minHeight: 0, position: "relative" }}>
+            <MarketChart points={market?.history.points ?? []} status={market?.status ?? "LOADING"} />
           </div>
 
           <div style={{ flexShrink: 0, borderTop: "1px solid var(--line)" }}>

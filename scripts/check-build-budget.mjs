@@ -4,13 +4,19 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../apps/web/.next/static/", import.meta.url));
 const limits = {
-  // Set just above what one interface actually ships, measured after
-  // ghost-app.tsx was deleted: 2,000,684 static, 1,792,343 of it JavaScript,
-  // 718,489 in the largest chunk. A ceiling with half a megabyte of slack
-  // catches nothing, so these sit roughly 7% above the real numbers. Expect to
-  // lower them again when the landing stops carrying three.js.
-  totalStaticBytes: 2_150_000,
-  totalJavaScriptBytes: 1_920_000,
+  // Measured with the price chart wired in: 2,171,588 static, 1,963,219 of it
+  // JavaScript, 718,489 in the largest chunk. These sit about 6% above that.
+  //
+  // The previous ceiling was set before the chart shipped and broke as soon as
+  // it did, which was avoidable: the chart was known to be owed at the time.
+  //
+  // Worth knowing when reading a failure here: totalStaticBytes sums every file
+  // on disk, including chunks a route only fetches later, so splitting a
+  // dependency out does not reduce it. largestJavaScriptBytes is the one that
+  // tracks how heavy a single entry has become; it did not move when the
+  // charting library arrived, which is how we know it landed in its own chunk.
+  totalStaticBytes: 2_300_000,
+  totalJavaScriptBytes: 2_080_000,
   largestJavaScriptBytes: 780_000,
 };
 
