@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowCounterClockwise, Check, CursorClick, Play, SkipForward } from "@phosphor-icons/react";
+import { Check } from "@phosphor-icons/react";
 import { useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 export type SignalId = "price" | "funding" | "pnl";
@@ -25,14 +25,6 @@ export const SIGNALS: SignalDatum[] = [
 export function signalValue(signal: SignalDatum, index: number, stage: number) {
   return stage >= index + 1 ? signal.readyValue : signal.waitingValue;
 }
-
-const STAGE_COPY = [
-  { state: "OBSERVING", title: "The market is still forming.", body: "Three independent signals are being read from one complete market frame." },
-  { state: "SIGNAL 01 READY", title: "Price has crossed.", body: "One signal is true. Triggerlane keeps watching because the whole moment has not formed." },
-  { state: "SIGNAL 02 READY", title: "Funding now agrees.", body: "Two signals are true. Position profit still has to confirm the same stored frame." },
-  { state: "ALL THREE READY", title: "One complete moment.", body: "Price, funding, and position profit agree. The execution boundary is now open." },
-  { state: "ACTION FIRED ONCE", title: "One moment. One action.", body: "The simulated action crossed the boundary once and settled into a final receipt state." },
-] as const;
 
 function makeLabel(lines: string[], accent: string, width = 560) {
   const canvas = document.createElement("canvas");
@@ -341,59 +333,4 @@ export function SignalEngineScene({ stage, focused, onFocus, context = "prototyp
   }
 
   return <div className="signal-engine-canvas" ref={hostRef} data-testid="signal-engine-scene" aria-hidden="true" />;
-}
-
-export function SignalEnginePrototype() {
-  const [stage, setStage] = useState(0);
-  const [focused, setFocused] = useState<SignalId | null>(null);
-  const [running, setRunning] = useState(false);
-  const reducedMotion = Boolean(useReducedMotion());
-  const copy = STAGE_COPY[stage]!;
-  const readyCount = Math.min(stage, 3);
-  const statusText = useMemo(() => `${readyCount} of 3 signals ready`, [readyCount]);
-
-  useEffect(() => {
-    if (!running) return;
-    if (stage >= 4) { setRunning(false); return; }
-    const delay = reducedMotion ? 120 : stage === 2 ? 1050 : 820;
-    const timer = window.setTimeout(() => setStage((value) => Math.min(4, value + 1)), delay);
-    return () => window.clearTimeout(timer);
-  }, [reducedMotion, running, stage]);
-
-  const reset = () => { setRunning(false); setStage(0); setFocused(null); };
-  const run = () => { setStage(0); setFocused(null); setRunning(true); };
-  const advance = () => { setRunning(false); setStage((value) => Math.min(4, value + 1)); };
-
-  return <main className={`signal-engine-prototype stage-${stage}`}>
-    <SignalEngineScene stage={stage} focused={focused} onFocus={setFocused} />
-    <div className="signal-engine-vignette" aria-hidden="true" />
-    <header className="signal-engine-header">
-      <a href="/" aria-label="Return to Triggerlane"><span className="signal-engine-mark">TL</span><span><b>TRIGGERLANE</b><small>SIGNAL ENGINE · PROTOTYPE 23</small></span></a>
-      <div className="signal-engine-state" aria-live="polite"><i /><span>{copy.state}</span><b>{statusText}</b></div>
-    </header>
-    <section className="signal-engine-story" aria-labelledby="signal-engine-title">
-      <span>THREE SIGNALS · ONE STORED FRAME</span>
-      <h1 id="signal-engine-title">{copy.title}</h1>
-      <p>{copy.body}</p>
-    </section>
-    <aside className={`signal-engine-action-readout ${stage >= 4 ? "fired" : ""}`} aria-label="One-shot action">
-      <small>ONE-SHOT ACTION</small><b>SELL 25% SOL</b><span>{stage >= 4 ? "FILLED ONCE" : stage >= 3 ? "READY" : "WAITING FOR ALL TRUE"}</span>
-    </aside>
-    <div className="signal-engine-hint"><CursorClick size={16} /><span>Focus a signal or move through the frame</span></div>
-    <section className="signal-engine-dock" aria-label="Signal Engine controls">
-      <div className="signal-engine-signals" role="group" aria-label="Market signals">
-        {SIGNALS.map((signal, index) => {
-          const ready = stage >= index + 1;
-          return <button className={`${ready ? "ready" : ""} ${focused === signal.id ? "focused" : ""}`} aria-pressed={focused === signal.id} onClick={() => setFocused(signal.id)} key={signal.id}>
-            <i>{ready ? <Check size={14} weight="bold" /> : `0${index + 1}`}</i><span><small>{signal.shortLabel}</small><b>{signalValue(signal, index, stage)}</b></span><em>{ready ? "TRUE" : "WATCHING"}</em>
-          </button>;
-        })}
-      </div>
-      <div className="signal-engine-controls">
-        <button className="engine-reset" onClick={reset} aria-label="Reset Signal Engine"><ArrowCounterClockwise size={18} /></button>
-        <button className="engine-step" onClick={advance} disabled={stage >= 4}><SkipForward size={17} />STEP</button>
-        <button className="engine-run" onClick={run} disabled={running}><Play size={16} weight="fill" />{running ? "RUNNING" : stage >= 4 ? "RUN AGAIN" : "RUN CONVERGENCE"}</button>
-      </div>
-    </section>
-  </main>;
 }
