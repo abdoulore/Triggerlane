@@ -320,6 +320,70 @@ describe("Ghost API", () => {
     expect(persisted.rows[0]?.published_at).not.toBeNull();
   });
 
+  it("stores one frame while the market is unchanged, and another when it moves", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+    await app.inject({ method: "POST", url: "/api/data-mode", headers: { cookie: liveCookie }, payload: { mode: "LIVE" } });
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: liveCookie } })).json();
+    // Unreachable target, so the trigger keeps watching across every tick.
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: liveCookie },
+      payload: { name: "Dedupe watcher", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "1" }] },
+    });
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+
+    const viewAt = (price: string, receivedAt: string): MarketView => ({
+      mode: "LIVE",
+      instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "MARK_PRICE" },
+      provider: "Hyperliquid",
+      // Content-addressed, exactly as the provider now builds it.
+      snapshotId: `hl:${price}:0.00003`,
+      price: { value: price, unit: "USDC_PER_SOL" },
+      funding: { value: "0.00003", unit: "RATIO", period: "1H" },
+      sourceTimestamp: null,
+      receivedAt,
+      status: "FRESH",
+      executionEligible: true,
+      eligibilityReason: "Fresh Live frame.",
+      change: { value: null, label: null },
+      history: { status: "AVAILABLE", interval: "1m", points: [], reason: null },
+    });
+
+    let view = viewAt("250", new Date().toISOString());
+    const worker = new GhostService(database, {}, { view: async () => view });
+    const count = async () => {
+      const stored = await database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM evaluation_frames WHERE portfolio_id=$1 AND mode='LIVE'", [workspace.portfolio.id]);
+      return Number(stored.rows[0]?.count ?? 0);
+    };
+
+    // Arming a live trigger can already have stored a frame, so measure the
+    // change across ticks rather than an absolute total.
+    const before = await count();
+    await worker.processLivePaperTick();
+    const afterFirst = await count();
+    expect(afterFirst).toBeGreaterThan(before);
+
+    // Same market, later receipt times: nothing new to record.
+    for (let tick = 0; tick < 3; tick += 1) {
+      view = viewAt("250", new Date(Date.now() + (tick + 1) * 5_000).toISOString());
+      await worker.processLivePaperTick();
+    }
+    expect(await count()).toBe(afterFirst);
+
+    // The price moves, so the frame is genuinely new.
+    view = viewAt("251.25", new Date(Date.now() + 20_000).toISOString());
+    await worker.processLivePaperTick();
+    expect(await count()).toBe(afterFirst + 1);
+
+    // Leave no watching trigger behind. The worker now targets every live
+    // portfolio that has one, for the whole run, so a permanently watching
+    // trigger would join later tests' ticks and inflate their counts.
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/cancel`, headers: mutationHeaders(liveCookie) });
+  });
+
   it("prunes stale frames and observations without touching stored evidence", async () => {
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;

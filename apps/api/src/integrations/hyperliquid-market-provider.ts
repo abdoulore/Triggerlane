@@ -113,7 +113,10 @@ export class HyperliquidMarketProvider {
       mode: "LIVE",
       instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "MARK_PRICE" },
       provider: "Hyperliquid",
-      snapshotId: `hl:${createHash("sha256").update(`${context.markPx}:${context.funding}:${receivedAt}`).digest("hex").slice(0, 16)}`,
+      // Identify the snapshot by what it contains, not when it arrived. Including
+      // the receipt time made every poll look like new data, so an unchanged
+      // market still wrote a frame per tick.
+      snapshotId: `hl:${createHash("sha256").update(`${context.markPx}:${context.funding}`).digest("hex").slice(0, 16)}`,
       price: { value: context.markPx, unit: "USDC_PER_SOL" },
       funding: { value: context.funding, unit: "RATIO", period: "1H" },
       sourceTimestamp: null,

@@ -238,7 +238,13 @@ export class GhostService {
       [hashToken(token)],
     );
     if (!session) return null;
-    await this.database.query("UPDATE sessions SET last_seen_at = NOW() WHERE token_hash = $1", [hashToken(token)]);
+    // Every authenticated request resolves its session, so writing the seen time
+    // each time turns every read into a write. A minute of granularity is all
+    // any caller needs.
+    await this.database.query(
+      "UPDATE sessions SET last_seen_at = NOW() WHERE token_hash = $1 AND last_seen_at < NOW() - INTERVAL '60 seconds'",
+      [hashToken(token)],
+    );
     return { userId: session.user_id, expiresAt: new Date(session.expires_at).toISOString() };
   }
 

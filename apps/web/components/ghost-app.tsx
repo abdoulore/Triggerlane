@@ -1357,7 +1357,12 @@ export function GhostApp({ view, ghostId, triggerSection = "active" }: { view: A
         if (payload.type === "heartbeat" || payload.type === "connected") return;
         if (payload.type.startsWith("market.")) {
           void queryClient.invalidateQueries({ queryKey: ["market-view"] });
-          if (payload.type !== "market.connection.updated") void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+          // Condition readiness lives on the workspace and is rewritten whenever
+          // a frame is stored, without an event of its own, so this refetch has
+          // to stay. It is no longer per tick: a frame is stored only when the
+          // price or funding actually moved. Connection and demo-step events
+          // carry no new readiness.
+          if (payload.type === "market.frame.updated") void queryClient.invalidateQueries({ queryKey: ["workspace"] });
         }
         if (payload.type.startsWith("ghost.")) {
           void queryClient.invalidateQueries({ queryKey: ["workspace"] });
