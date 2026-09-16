@@ -112,6 +112,49 @@ export interface CapitalReservation {
   updatedAt: string;
 }
 
+/**
+ * A settled trade. These fields come straight off the executions row, so they
+ * stay snake_case, unlike the reservation and attempt shapes the API maps.
+ */
+export interface Execution {
+  id: string;
+  ghost_id: string;
+  ghost_name: string;
+  status: string;
+  input_asset: string;
+  input_amount: string;
+  output_asset: string;
+  output_amount: string;
+  execution_price: string;
+  modeled_slippage_bps: number;
+  completed_at: string;
+  receipt: Record<string, unknown>;
+  portfolioGeneration?: number;
+}
+
+/** A trade that reached settlement and was stopped there, with the reason. */
+export interface ExecutionAttempt {
+  id: string;
+  ghostId: string;
+  ghostName: string;
+  configurationVersion: number;
+  status: "BLOCKED";
+  side: Side;
+  amount: string;
+  amountType: "USDC" | "POSITION_PERCENT";
+  maxSlippageBps: number;
+  conditions: GhostDraft["conditions"];
+  createdAt: string;
+  updatedAt: string;
+  reason: {
+    message: string;
+    metadata: { quote?: { modelVersion?: string; referencePrice?: string; executionPrice?: string; modeledSlippageBps?: number } };
+    createdAt: string;
+  } | null;
+  reservation: Reservation | null;
+  frame: Frame;
+}
+
 export interface Workspace {
   identity: { id: string; label: string };
   portfolio: {
@@ -124,6 +167,9 @@ export interface Workspace {
   };
   frame: Frame;
   ghosts: Trigger[];
+  executions: Execution[];
+  archivedExecutions?: Execution[];
+  executionAttempts: ExecutionAttempt[];
   ledger: LedgerTransaction[];
   reservations: CapitalReservation[];
 }

@@ -32,6 +32,21 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
   const trustProxy = trustedProxyHops > 0 ? (_address: string, hop: number) => hop < trustedProxyHops : false;
   const logger = process.env.NODE_ENV === "test" ? false : { redact: { paths: ["req.headers.cookie", "req.headers.authorization", "req.headers['idempotency-key']", "res.headers['set-cookie']"], censor: "[REDACTED]" } };
   const app = Fastify({ logger, trustProxy });
+
+  // Every mutation here takes no body: arm, pause, resume, cancel and reset all
+  // act on the route's id alone. A client that still sets a JSON content-type on
+  // those calls used to hit the default parser, which throws on an empty payload
+  // and surfaced as a 500 rather than the success the request deserved. An empty
+  // payload means "no fields", so it parses as such.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body: string, done) => {
+    const text = typeof body === "string" ? body.trim() : "";
+    if (text.length === 0) return done(null, {});
+    try {
+      done(null, JSON.parse(text) as unknown);
+    } catch {
+      done(new AppError("VALIDATION_ERROR", "Request body is not valid JSON.", 400), undefined);
+    }
+  });
   const db = database ?? (await getDatabase());
   const service = new GhostService(db);
   const baseConfig = runtimeConfig();

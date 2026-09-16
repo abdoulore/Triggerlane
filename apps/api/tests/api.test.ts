@@ -1060,4 +1060,79 @@ describe("Ghost API", () => {
     expect(overQuota.json().error.code).toBe("TRIGGER_QUOTA_REACHED");
     await limitedApp.close();
   });
+
+  /*
+   * Arm, pause, resume, cancel and reset act on the route's id alone and take no
+   * body. A client that still announces `content-type: application/json` on
+   * those calls used to reach the default JSON parser, which throws on an empty
+   * payload, and the error handler turned that into a 500. The rest of this
+   * suite never caught it because `app.inject` sends no content-type unless a
+   * payload is given, so these tests send the header the way a browser does.
+   */
+  const bodylessHeaders = (sessionCookie = cookie) => ({
+    ...mutationHeaders(sessionCookie),
+    "content-type": "application/json",
+  });
+
+  it("runs the whole lifecycle when a bodyless call declares a JSON content-type", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    // A target the mark never reaches, so nothing settles underneath the test.
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: mutationHeaders(isolatedCookie),
+      payload: { ...sellDraft("Bodyless lifecycle"), conditions: [{ metric: "PRICE", operator: "LTE", target: "0.01" }] },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${id}/arm`, headers: bodylessHeaders(isolatedCookie) });
+    expect(armed.statusCode, armed.body).toBe(200);
+    const paused = await app.inject({ method: "POST", url: `/api/ghosts/${id}/pause`, headers: bodylessHeaders(isolatedCookie) });
+    expect(paused.statusCode, paused.body).toBe(200);
+    const resumed = await app.inject({ method: "POST", url: `/api/ghosts/${id}/resume`, headers: bodylessHeaders(isolatedCookie) });
+    expect(resumed.statusCode, resumed.body).toBe(200);
+    const cancelled = await app.inject({ method: "POST", url: `/api/ghosts/${id}/cancel`, headers: bodylessHeaders(isolatedCookie) });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+    expect(cancelled.json().status).toBe("CANCELLED");
+  });
+
+  it("cancels a never-armed draft declaring a JSON content-type", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: mutationHeaders(isolatedCookie),
+      payload: { ...sellDraft("Bodyless draft cancel"), conditions: [{ metric: "PRICE", operator: "LTE", target: "0.01" }] },
+    });
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/api/ghosts/${created.json().id}/cancel`,
+      headers: bodylessHeaders(isolatedCookie),
+    });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+  });
+
+  it("keeps a malformed body a client error and still validates a well-formed one", async () => {
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: bodylessHeaders(),
+      payload: "{not json",
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json().error.code).toBe("VALIDATION_ERROR");
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: bodylessHeaders(),
+      payload: { side: "SELL" },
+    });
+    expect(invalid.statusCode).toBe(422);
+  });
 });
