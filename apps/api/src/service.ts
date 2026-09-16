@@ -1036,7 +1036,7 @@ export class GhostService {
     );
     const attemptRows = await rows<Record<string, unknown>>(
       this.database,
-      `SELECT ea.id, ea.ghost_id, ea.configuration_version, ea.trigger_frame_id, ea.status, ea.created_at, ea.updated_at,
+      `SELECT ea.id, ea.ghost_id, ea.configuration_version, ea.trigger_frame_id, ea.status, ea.created_at, ea.updated_at, ea.blocked_reason,
         g.name AS ghost_name, g.side, g.amount_decimal::text, g.amount_type, g.max_slippage_bps, g.conditions,
         r.id AS reservation_id, r.asset AS reservation_asset, r.amount_decimal::text AS reservation_amount, r.status AS reservation_status,
         f.cutoff_at AS frame_cutoff_at, f.assembled_at AS frame_assembled_at, f.mode AS frame_mode,
@@ -1133,7 +1133,14 @@ export class GhostService {
         completed_at: new Date(execution.completed_at as string).toISOString(),
       })),
       executionAttempts: attemptRows.map((attempt) => {
-        const reason = blockedActivityRows.find((activity) => activity.ghost_id === attempt.ghost_id && Math.abs(new Date(activity.created_at as string).getTime() - new Date(attempt.updated_at as string).getTime()) < 5000);
+        // Prefer the reason stored on the attempt itself. Matching an activity
+        // row by a five-second window around the update time could attach the
+        // wrong reason when a trigger blocked more than once. The fallback
+        // covers attempts blocked before the column existed.
+        const stored = attempt.blocked_reason ? parseJson(attempt.blocked_reason as JsonValue) as { message?: string; quote?: unknown; blockedAt?: string } : null;
+        const reason = stored
+          ? { message: stored.message, metadata: { quote: stored.quote }, created_at: stored.blockedAt ?? attempt.updated_at }
+          : blockedActivityRows.find((activity) => activity.ghost_id === attempt.ghost_id && Math.abs(new Date(activity.created_at as string).getTime() - new Date(attempt.updated_at as string).getTime()) < 5000);
         return {
           id: attempt.id,
           ghostId: attempt.ghost_id,
@@ -1682,7 +1689,8 @@ export class GhostService {
     const price = frame.observations.PRICE.value;
     const quote = buildSandboxQuote({ side: ghost.side, reservedAmount: reservation.amount_decimal, referencePrice: price });
     if (quote.modeledSlippageBps > ghost.max_slippage_bps) {
-      await db.query("UPDATE execution_attempts SET status = 'BLOCKED', updated_at = NOW() WHERE id = $1", [attemptId]);
+      const blockedReason = { message: `Modeled slippage ${quote.modeledSlippageBps} bps exceeded the configured limit.`, quote, blockedAt: now() };
+      await db.query("UPDATE execution_attempts SET status = 'BLOCKED', blocked_reason = $2, updated_at = NOW() WHERE id = $1", [attemptId, JSON.stringify(blockedReason)]);
       await db.query("UPDATE capital_reservations SET status = 'ACTIVE', version = version + 1, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='LOCKED'", [reservation.id, portfolio.id]);
       await db.query("UPDATE ghosts SET status = 'WATCHING', was_qualified = TRUE, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='TRIGGERED'", [ghost.id, portfolio.id]);
       await this.addActivity(db, userId, ghost.id, "EXECUTION_BLOCKED", `Modeled slippage ${quote.modeledSlippageBps} bps exceeded the configured limit.`, { quote });

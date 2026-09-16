@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -10,6 +10,9 @@ import { AppError, GhostService } from "./service.js";
 import { runtimeConfig } from "./config.js";
 
 const COOKIE_NAME = "ghost_session";
+// The SSE response writes its own headers, so it has to use the same origin the
+// CORS plugin is registered with rather than a second copy of the expression.
+const webOrigin = process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -51,7 +54,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     hook: "onRequest",
   });
   await app.register(cors, {
-    origin: process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
+    origin: webOrigin,
     credentials: true,
   });
 
@@ -67,7 +70,12 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     if (process.env.NODE_ENV !== "production") return;
     const expected = process.env.OPERATIONS_TOKEN;
     if (!expected || expected.length < 32) throw new AppError("OPERATIONS_NOT_CONFIGURED", "Operational diagnostics are unavailable.", 404);
-    if (request.headers.authorization !== `Bearer ${expected}`) throw new AppError("OPERATIONS_UNAUTHORIZED", "Operational diagnostics require authorization.", 401);
+    // Compare in constant time so a wrong token cannot be narrowed down by timing.
+    const offered = Buffer.from(String(request.headers.authorization ?? ""));
+    const wanted = Buffer.from(`Bearer ${expected}`);
+    if (offered.length !== wanted.length || !timingSafeEqual(offered, wanted)) {
+      throw new AppError("OPERATIONS_UNAUTHORIZED", "Operational diagnostics require authorization.", 401);
+    }
   }
 
   function consumeLimit(key: string, maximum: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
@@ -374,7 +382,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
-      "access-control-allow-origin": process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
+      "access-control-allow-origin": webOrigin,
       "access-control-allow-credentials": "true",
     });
     const write = (event: unknown) => reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);

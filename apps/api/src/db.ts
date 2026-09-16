@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_one_inflight_ghost
   ON execution_attempts(ghost_id) WHERE status IN ('LOCKED', 'SETTLING');
+ALTER TABLE execution_attempts ADD COLUMN IF NOT EXISTS blocked_reason JSONB;
 
 CREATE TABLE IF NOT EXISTS executions (
   id TEXT PRIMARY KEY,
