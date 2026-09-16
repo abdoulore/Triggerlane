@@ -82,3 +82,54 @@ test("the Finished tab passes the accessibility gate with its pop-up open", asyn
     expect(open.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
   }
 });
+
+test("a trade stopped at settlement keeps its evidence", async ({ page }) => {
+  await ready(page);
+
+  // The price condition is always true and the limit is below any modeled
+  // impact, so settlement stores a blocked attempt rather than a fill.
+  const created = await page.evaluate(async () => {
+    const call = async (path: string, body?: unknown) => {
+      const headers: Record<string, string> = { "idempotency-key": crypto.randomUUID() };
+      if (body != null) headers["content-type"] = "application/json";
+      const response = await fetch(path, { method: "POST", credentials: "include", headers, body: body == null ? undefined : JSON.stringify(body) });
+      if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
+      return response.json();
+    };
+    const trigger = await call("/api/ghosts", {
+      name: "Blocked evidence trigger",
+      side: "SELL",
+      amount: "10",
+      amountType: "POSITION_PERCENT",
+      maxSlippageBps: 1,
+      expiresInHours: 24,
+      conditions: [{ metric: "PRICE", operator: "LTE", target: "999999" }],
+    }) as { id: string };
+    await call(`/api/ghosts/${trigger.id}/arm`);
+    return trigger;
+  });
+  expect(created.id).toBeTruthy();
+
+  // The worker settles on its own cadence, so wait for the attempt to land.
+  await expect.poll(async () => page.evaluate(async () => {
+    const workspace = await (await fetch("/api/workspace", { credentials: "include" })).json() as {
+      executionAttempts: Array<{ ghostName: string }>;
+    };
+    return workspace.executionAttempts.some((attempt) => attempt.ghostName === "Blocked evidence trigger");
+  }), { timeout: 60_000, intervals: [1_000] }).toBe(true);
+
+  await page.goto("/ghosts?view=past");
+  await expect(page.getByRole("button", { name: /^Finished/ })).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.getByText("Blocked evidence trigger").first()).toBeVisible();
+  await expect(page.getByText("Balances unchanged").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Attempt", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Attempt" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Your limit")).toBeVisible();
+  await expect(dialog.getByText("Locked capital")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+

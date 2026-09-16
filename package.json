@@ -13,7 +13,7 @@
     "build": "npm run build -w @ghost/domain && npm run build -w @ghost/api && npm run build -w @ghost/web",
     "test": "npm run test -w @ghost/domain && npm run test -w @ghost/api",
     "test:e2e": "playwright test",
-    "test:launch": "playwright test e2e/launch-hardening.spec.ts",
+    "test:launch": "playwright test e2e/launch-gates.spec.ts e2e/landing.spec.ts e2e/lifecycle.spec.ts",
     "check:budget": "node scripts/check-build-budget.mjs",
     "data:backup": "node scripts/pglite-volume.mjs backup",
     "data:restore": "node scripts/pglite-volume.mjs restore",

@@ -219,11 +219,16 @@ export function TriggersScreen({ initialFilter = "WATCHING" }: { initialFilter?:
 
           return (
             <Row key={trigger.id} columns={COLUMNS} tone={blocked ? "warn" : undefined}>
+              {/* The name is what the trader typed, so it leads, the way the
+                  finished list and the detail screen already lead with it. */}
               <span>
-                <span className={trigger.side === "BUY" ? ui.up : ui.down} style={{ fontWeight: 600 }}>
-                  {trigger.side === "BUY" ? "Buy" : "Sell"}
-                </span>{" "}
-                {trigger.amountType === "USDC" ? `${amount(trigger.amount)} USDC` : `${amount(trigger.amount)}% of SOL`}
+                <span style={{ display: "block", fontWeight: 600 }}>{trigger.name}</span>
+                <span className={ui.muted} style={{ display: "block", fontSize: 11 }}>
+                  <span className={trigger.side === "BUY" ? ui.up : ui.down}>
+                    {trigger.side === "BUY" ? "Buy" : "Sell"}
+                  </span>{" "}
+                  {trigger.amountType === "USDC" ? `${amount(trigger.amount)} USDC` : `${amount(trigger.amount)}% of SOL`}
+                </span>
               </span>
 
               <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
