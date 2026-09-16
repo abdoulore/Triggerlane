@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import styles from "./ui.module.css";
 
@@ -89,6 +90,64 @@ export function Row({ columns, head = false, children, tone }: { columns: string
 
 export function Chip({ met = false, children }: { met?: boolean; children: ReactNode }) {
   return <span className={`${styles.chip} ${styles.mono} ${met ? styles.chipMet : ""}`}>{children}</span>;
+}
+
+/** How far a condition is from being true. Full and mint once it is. */
+export function Bar({ ratio, met = false }: { ratio: number; met?: boolean }) {
+  const width = met ? 100 : Math.max(4, Math.min(100, (1 - ratio) * 100));
+  return (
+    <span className={styles.bar} style={{ display: "block", width: 150 }}>
+      <span className={`${styles.barFill} ${met ? styles.barFillMet : ""}`} style={{ width: `${width}%`, display: "block" }} />
+    </span>
+  );
+}
+
+/**
+ * Secondary detail opens over the page. Escape and the close control dismiss
+ * it, and focus moves in so a keyboard reaches the content rather than the page
+ * behind it. Never used for placing, pausing or cancelling.
+ */
+export function Dialog({ title, aside, onClose, children, footer }: {
+  title: string;
+  aside?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    panel.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className={styles.backdrop} onClick={onClose}>
+      <div
+        ref={panel}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={styles.dialog}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className={styles.dialogHead}>
+          <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{title}</span>
+            {aside}
+          </span>
+          <button type="button" className={styles.dialogClose} onClick={onClose} aria-label={`Close ${title}`}>Close</button>
+        </div>
+        <div className={styles.dialogBody}>{children}</div>
+        {footer && <div className={styles.dialogHead} style={{ borderBottom: 0, borderTop: "1px solid var(--line)" }}>{footer}</div>}
+      </div>
+    </div>
+  );
 }
 
 export function PrimaryButton({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) {

@@ -153,6 +153,58 @@
 
 .secondary:hover { border-color: var(--accent-dark); }
 
+/* Secondary detail opens over the page instead of sitting on it. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 16, 13, 0.74);
+}
+
+.dialog {
+  width: min(620px, 100%);
+  max-height: min(80dvh, 680px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-overlay);
+}
+
+.dialogHead {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dialogBody { overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(238, 246, 243, 0.22) transparent; }
+.dialogBody::-webkit-scrollbar { width: 8px; }
+.dialogBody::-webkit-scrollbar-thumb { background: rgba(238, 246, 243, 0.22); border-radius: 4px; }
+
+.dialogClose {
+  min-height: var(--control-compact);
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.dialogClose:hover { color: var(--text); }
+
+.bar { height: 5px; border-radius: 3px; background: rgba(238, 246, 243, 0.1); overflow: hidden; }
+.barFill { height: 100%; border-radius: 3px; background: var(--muted); }
+.barFillMet { background: var(--accent); }
+
 .mono { font-family: var(--font-geist-mono), ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .up { color: var(--green); }
