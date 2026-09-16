@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useEffect, useReducer, useState } from "react";
-import { evaluateCondition, fundingAprPercent, modeledSlippageBps, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
+import { evaluateCondition, fundingAprPercent, modeledSlippageBps, roundToHalfDollar, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { api } from "@/lib/api";
 import { amount, conditionChip, fundingApr, fundingHourly, metricLabel, operatorLabel, percent, timeLeft, usd } from "@/lib/format";
 import type { StrategyCatalog, Trigger, Workspace } from "@/lib/types";
@@ -102,6 +102,9 @@ export function TradeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [draft, dispatch] = useReducer(reducer, initial);
   const [loaded, setLoaded] = useState<string | null>(null);
+  // The starting price target is only a default until the trader edits it, so
+  // it is aimed at the market once, not on every tick.
+  const [aimed, setAimed] = useState(false);
 
   // Ideas hands a strategy over as ?strategy=<id>. Load its draft once, then
   // drop the parameter so a refresh does not silently overwrite later edits.
@@ -126,6 +129,7 @@ export function TradeScreen() {
   const clearStrategy = () => {
     dispatch({ type: "load", draft: initial });
     setLoaded(null);
+    setAimed(false);
   };
 
   useEffect(() => {
@@ -156,6 +160,43 @@ export function TradeScreen() {
     },
     onError: (caught: unknown) => setError(caught instanceof Error ? caught.message : "The trigger could not be placed."),
   });
+
+  /*
+   * Aim a fresh draft at the market, once. A price target written against a
+   * different market is either already true or unreachable, which is exactly
+   * how the idea catalogue broke; the composer's own $178 default had the same
+   * problem. The offset keeps it on the reachable side of the operator, since a
+   * target sitting exactly at the market is satisfied the moment it is placed.
+   *
+   * This reads the queries rather than the derived price below, because the
+   * dependency array is evaluated during render and that value does not exist
+   * yet at this point in the body.
+   */
+  useEffect(() => {
+    if (aimed || loaded) return;
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("strategy")) return;
+    const current = Number(marketQuery.data?.price.value ?? workspaceQuery.data?.frame.observations.PRICE.value ?? 0);
+    if (!Number.isFinite(current) || current <= 0) return;
+
+    const sol = Number(workspaceQuery.data?.portfolio.balances.SOL.quantity ?? 0);
+    const notionalNow = draft.side === "BUY" ? Number(draft.amount) : (sol * Number(draft.amount)) / 100 * current;
+    const estimate = notionalNow > 0 ? modeledSlippageBps(notionalNow) : 0;
+
+    dispatch({
+      type: "load",
+      draft: {
+        ...draft,
+        // A limit under the modeled impact qualifies and then never settles.
+        maxSlippageBps: Math.min(500, Math.max(50, estimate + 10)),
+        conditions: draft.conditions.map((condition) =>
+          condition.metric === "PRICE"
+            ? { ...condition, target: roundToHalfDollar(current * (condition.operator === "LTE" ? 0.98 : 1.02)) }
+            : condition,
+        ),
+      },
+    });
+    setAimed(true);
+  }, [aimed, loaded, draft, marketQuery.data, workspaceQuery.data]);
 
   if (error && !workspace) return <main style={{ padding: 40 }}><p className={ui.down}>{error}</p></main>;
   if (!workspace) return <main style={{ padding: 40 }}><p className={ui.muted}>Loading workspace…</p></main>;

@@ -149,8 +149,13 @@ export function IdeasScreen() {
               {selected.draft.conditions.map((condition) => (
                 <div key={condition.metric} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                   <span className={ui.muted}>{metricLabel[condition.metric]}</span>
-                  <span className={ui.mono}>
+                  <span className={ui.mono} style={{ textAlign: "right" }}>
                     {operatorLabel[condition.operator]} {targetReading(condition.metric, condition.target)}
+                    {condition.metric === "PRICE" && selected.priceOffsetPct != null && (
+                      <span className={ui.muted} style={{ display: "block", fontSize: 11 }}>
+                        {Math.abs(selected.priceOffsetPct)}% {selected.priceOffsetPct < 0 ? "below" : "above"} the current price
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}

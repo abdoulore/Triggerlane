@@ -367,7 +367,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     return result;
   });
 
-  app.get("/api/strategies", { preHandler: requireSession }, async () => service.strategies());
+  app.get("/api/strategies", { preHandler: requireSession }, async (request) => service.strategies(request.userId!));
   app.get("/api/execution-targets", { preHandler: requireSession }, async () => service.executionTargets());
   app.post("/api/compiler/preview", { preHandler: requireSession }, async (request) => service.compilerPreview(request.body));
   app.post("/api/strategies/:id/use", { preHandler: requireSession }, async (request) => {

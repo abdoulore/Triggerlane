@@ -799,6 +799,59 @@ describe("Ghost API", () => {
     expect(invalid.statusCode).toBe(422);
   });
 
+  it("retires a template that no longer ships, and aims the rest at the market", async () => {
+    // A template removed from the source used to live on in the catalogue for
+    // ever, because the upsert only ever set is_active TRUE. A row nothing
+    // recognises is exactly what a stale seeded price target looks like.
+    await database.query(
+      `INSERT INTO strategy_templates (id, name, category, description, thesis, featured, metrics, draft, is_active, sort_order, updated_at)
+       VALUES ('retired-idea', 'Retired Idea', 'Accumulation', 'No longer shipped.', 'Gone', FALSE, $1, $2, TRUE, 99, NOW())
+       ON CONFLICT (id) DO UPDATE SET is_active = TRUE`,
+      [JSON.stringify(["PRICE"]), JSON.stringify({ name: "Retired Idea", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "GTE", target: "255" }] })],
+    );
+
+    const response = await app.inject({ method: "GET", url: "/api/strategies", headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.strategies.map((strategy: { id: string }) => strategy.id)).not.toContain("retired-idea");
+
+    const stillThere = await database.query<{ is_active: boolean }>("SELECT is_active FROM strategy_templates WHERE id = 'retired-idea'");
+    expect(stillThere.rows[0]?.is_active, "the row is deactivated, not deleted").toBe(false);
+
+    // Every shipped idea carries its offset and a target resolved against a
+    // real price, on the reachable side of its own operator.
+    const retireSession = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const retireHeader = retireSession.headers["set-cookie"]!;
+    const retireCookie = Array.isArray(retireHeader) ? retireHeader[0]! : retireHeader;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: retireCookie } })).json();
+    const price = Number(workspace.frame.observations.PRICE.value);
+    expect(price).toBeGreaterThan(0);
+    for (const strategy of body.strategies) {
+      expect(typeof strategy.priceOffsetPct, `${strategy.id} offset`).toBe("number");
+      const condition = strategy.draft.conditions.find((item: { metric: string }) => item.metric === "PRICE");
+      if (!condition) continue;
+      if (condition.operator === "LTE") expect(Number(condition.target)).toBeLessThan(price);
+      else expect(Number(condition.target)).toBeGreaterThan(price);
+    }
+  });
+
+  it("hands over a draft aimed at the current market", async () => {
+    // Its own session: the shared one carries a "used exactly once" assertion,
+    // and a second usage recorded against it fails that test instead of this.
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const price = Number(workspace.frame.observations.PRICE.value);
+    const used = await app.inject({ method: "POST", url: "/api/strategies/euphoria-exit/use", headers: mutationHeaders(isolatedCookie) });
+    expect(used.statusCode).toBe(200);
+    const target = Number(used.json().draft.conditions.find((item: { metric: string }) => item.metric === "PRICE").target);
+    // Twelve percent above whatever SOL costs, not a number from another market.
+    expect(target).toBeGreaterThan(price);
+    expect(target).toBeCloseTo(price * 1.12, 0);
+  });
+
   it("discovers persisted schema-valid strategies and records usage", async () => {
     const response = await app.inject({ method: "GET", url: "/api/strategies", headers: { cookie } });
     expect(response.statusCode).toBe(200);

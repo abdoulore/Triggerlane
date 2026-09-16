@@ -184,6 +184,10 @@ export interface Strategy {
   featured: boolean;
   metrics: Metric[];
   draft: GhostDraft;
+  /** Where the price target sits relative to the market: -8 is 8% below. */
+  priceOffsetPct?: number | null;
+  /** The price the target was resolved against, when one was known. */
+  resolvedAgainstPrice?: string | null;
 }
 
 export interface StrategyCatalog {

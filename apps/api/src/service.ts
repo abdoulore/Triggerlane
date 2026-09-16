@@ -21,7 +21,7 @@ import {
   type Metric,
   type MetricObservation,
   type MarketView,
-} from "@ghost/domain";
+  resolveStrategyDraft,} from "@ghost/domain";
 import { one, rows, type Queryable } from "./db.js";
 import { HyperliquidMarketProvider, type LiveHistoryInterval } from "./integrations/hyperliquid-market-provider.js";
 import { SandboxAutomationAdapter } from "./integrations/sandbox/sandbox-automation-adapter.js";
@@ -1558,7 +1558,26 @@ export class GhostService {
     };
   }
 
-  async strategies() {
+  /**
+   * What SOL costs right now, for targets that have to track the market rather
+   * than a number written months ago. A live portfolio takes the provider's
+   * cached view; anything else, or a provider with nothing fresh, falls back to
+   * the newest stored frame, and then to the target on the template itself.
+   */
+  private async currentPrice(portfolio: PortfolioRow): Promise<string | null> {
+    if (portfolio.data_mode === "LIVE") {
+      try {
+        const view = await this.marketProvider.view("1m");
+        if (view.price.value != null) return view.price.value;
+      } catch {
+        // A stored frame is better than no price at all.
+      }
+    }
+    const frame = await this.latestFrame(this.database, portfolio.id);
+    return frame?.observations.PRICE.value ?? null;
+  }
+
+  async strategies(userId: string) {
     await this.database.transaction(async (tx) => {
       for (const [index, strategy] of STRATEGY_TEMPLATES.entries()) {
         await tx.query(
@@ -1568,7 +1587,16 @@ export class GhostService {
           [strategy.id, strategy.name, strategy.category, strategy.description, strategy.thesis, strategy.featured, JSON.stringify(strategy.metrics), JSON.stringify(strategy.draft), index],
         );
       }
+      // A template deleted from the source used to linger in the catalogue for
+      // ever, because nothing ever marked it inactive. Only is_active moves
+      // here; sort_order is what keeps the published order stable.
+      await tx.query(
+        "UPDATE strategy_templates SET is_active = FALSE, updated_at = NOW() WHERE is_active = TRUE AND NOT (id = ANY($1::text[]))",
+        [STRATEGY_TEMPLATES.map((strategy) => strategy.id)],
+      );
     });
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const price = await this.currentPrice(portfolio);
     const templates = await rows<Record<string, unknown>>(
       this.database,
       "SELECT id, name, category, description, thesis, featured, metrics, draft FROM strategy_templates WHERE is_active = TRUE ORDER BY sort_order",
@@ -1577,15 +1605,28 @@ export class GhostService {
       title: "Triggerlane Strategies",
       categories: ["Popular", "Accumulation", "Profit Taking", "Protection", "Advanced"],
       capabilities: { market: "SOL/USDC", metrics: ["PRICE", "FUNDING", "PNL"], unsupportedAdvancedMetrics: ["LIQUIDITY", "TVL", "VOLUME"] },
-      strategies: templates.map((template) => ({ ...template, metrics: parseJson(template.metrics as JsonValue), draft: parseJson(template.draft as JsonValue) })),
+      strategies: templates.map((template) => {
+        const source = STRATEGY_TEMPLATES.find((item) => item.id === template.id);
+        const draft = parseJson(template.draft as JsonValue) as GhostDraft;
+        return {
+          ...template,
+          metrics: parseJson(template.metrics as JsonValue),
+          draft: source ? resolveStrategyDraft({ ...source, draft }, price) : draft,
+          priceOffsetPct: source?.priceOffsetPct ?? null,
+          resolvedAgainstPrice: source?.priceOffsetPct == null ? null : price,
+        };
+      }),
     };
   }
 
   async useStrategy(userId: string, strategyId: string) {
     const strategy = STRATEGY_TEMPLATES.find((item) => item.id === strategyId);
     if (!strategy) throw new AppError("STRATEGY_NOT_FOUND", "Strategy was not found.", 404);
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const price = await this.currentPrice(portfolio);
     await this.addActivity(this.database, userId, null, "STRATEGY_USED", `${strategy.name} loaded into Composer.`, { strategyId });
-    return strategy;
+    // Hand over a draft aimed at the market the trader is actually looking at.
+    return { ...strategy, draft: resolveStrategyDraft(strategy, price) };
   }
 
   private async evaluateWatchingGhosts(db: Queryable, userId: string, portfolio: PortfolioRow, frame: EvaluationFrame): Promise<void> {
