@@ -23,7 +23,7 @@ export function runtimeConfig() {
   const environment = requested as AppEnvironment;
   const rialoPrerequisites = Boolean(process.env.RIALO_NETWORK_URL) && flag("RIALO_TOOLCHAIN_CONFIGURED", false);
   const features = {
-    aiComposer: flag("ENABLE_AI_COMPOSER", true),
+    aiComposer: flag("ENABLE_AI_COMPOSER", false),
     replay: flag("ENABLE_REPLAY", false),
     multiStage: flag("ENABLE_MULTI_STAGE", false),
     rialo: flag("ENABLE_RIALO", false) && rialoPrerequisites,

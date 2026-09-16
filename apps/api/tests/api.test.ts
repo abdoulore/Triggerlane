@@ -29,9 +29,11 @@ describe("Ghost API", () => {
   const mutationHeaders = (sessionCookie = cookie) => ({ cookie: sessionCookie, "idempotency-key": randomUUID() });
 
   beforeAll(async () => {
-    // Replay is off by default now that the UI no longer offers it; these tests
-    // still cover the endpoint's contract for anyone who turns it back on.
+    // Replay and the deterministic composer are off by default now that the UI
+    // offers neither; these tests still cover their contracts for anyone who
+    // turns them back on.
     process.env.ENABLE_REPLAY = "true";
+    process.env.ENABLE_AI_COMPOSER = "true";
     database = await createDatabase(":memory:");
     app = await buildServer(database);
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });

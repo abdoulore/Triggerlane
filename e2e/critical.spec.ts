@@ -675,25 +675,13 @@ test("Portfolio preserves capital hierarchy without mobile overflow", async ({ p
   await page.screenshot({ path: testInfo.outputPath("portfolio-reservation-mobile.png"), fullPage: false });
 });
 
-test("AI Composer requires review before applying a structured Ghost", async ({ page }) => {
+test("Trade offers one composer with no describe-it tab", async ({ page }) => {
   await page.goto("/trade");
-  await page.getByRole("tab", { name: "AI", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Describe your trigger" })).toBeVisible();
-  await page.getByRole("button", { name: "GENERATE TRIGGER" }).click();
-
-  await expect(page.getByText("STRUCTURED PROPOSAL")).toBeVisible();
-  await expect(page.getByText("Amount: 50% of the SOL position")).toBeVisible();
-  await expect(page.getByText("Triggerlane analyzes configuration and historical conditions. It does not provide investment advice.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "SAVE TRIGGER" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "APPLY TO COMPOSER" }).click();
-  await expect(page.getByText("AI DRAFT APPLIED")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Trigger name" })).toHaveValue("AI SOL exit");
-  await expect(page.getByRole("spinbutton", { name: "SOL position to sell %" })).toHaveValue("50");
-  await expect(page.getByLabel("PRICE target")).toHaveValue("300");
-  await expect(page.getByLabel("FUNDING target")).toHaveValue("0.05");
-  await expect(page.getByLabel("PNL target")).toHaveValue("40");
-  await expect(page.getByRole("button", { name: "SAVE TRIGGER" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Choose the moment" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "AI", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Build manually" })).toHaveCount(0);
+  await expect(page.getByText("Describe your trigger")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /SAVE TRIGGER/ })).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page }).include(".composer-panel").withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));

@@ -455,8 +455,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const [draft, setDraft] = useState<GhostRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadedStrategy, setLoadedStrategy] = useState<Strategy | null>(null);
-  const [composerMode, setComposerMode] = useState<"QUICK" | "AI">("QUICK");
-  const [aiApplied, setAiApplied] = useState(false);
   const [compiler, setCompiler] = useState<CompilerPreview | null>(null);
   const [conditionMenuOpen, setConditionMenuOpen] = useState(false);
   const [draftStorageReady, setDraftStorageReady] = useState(false);
@@ -544,13 +542,10 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   return (
     <aside className="composer-panel">
       <div className="panel-heading">
-        <div><span className="eyebrow">{composerMode === "AI" ? "DESCRIBE IT" : "BUILD A TRIGGER"}</span><h2>{composerMode === "AI" ? "Describe your trigger" : "Choose the moment"}</h2><p className="composer-intro">Use one signal or combine several. The trigger acts when every active condition is true.</p></div>
-        {composerMode === "AI" ? <Sparkle size={20} /> : <SlidersHorizontal size={20} />}
+        <div><span className="eyebrow">BUILD A TRIGGER</span><h2>Choose the moment</h2><p className="composer-intro">Use one signal or combine several. The trigger acts when every active condition is true.</p></div>
+        <SlidersHorizontal size={20} />
       </div>
-      <div className={`composer-modes ${!capabilities.features.aiComposer ? "single" : ""}`} role="tablist" aria-label="Composer mode"><button role="tab" aria-label="Build manually" aria-selected={composerMode === "QUICK"} className={composerMode === "QUICK" ? "active" : ""} onClick={() => setComposerMode("QUICK")}>BUILD</button>{capabilities.features.aiComposer && <button role="tab" aria-label="AI" aria-selected={composerMode === "AI"} className={composerMode === "AI" ? "active" : ""} onClick={() => setComposerMode("AI")}>DESCRIBE</button>}</div>
-      {composerMode === "AI" ? <AiComposer baseDraft={state} onApply={(result) => { dispatch({ type: "load", draft: result.draft }); setLoadedStrategy(null); setAiApplied(true); setDraft(null); setComposerMode("QUICK"); window.history.replaceState({}, "", "/trade"); }} /> : <>
       {loadedStrategy && <div className="strategy-loaded"><CheckCircle size={16} weight="fill" /><div><span>STRATEGY LOADED</span><b>{loadedStrategy.name}</b></div><button title="Clear strategy" onClick={() => { dispatch({ type: "reset" }); setLoadedStrategy(null); window.history.replaceState({}, "", "/trade"); }}><X size={14} /></button></div>}
-      {aiApplied && <div className="strategy-loaded"><Sparkle size={16} weight="fill" /><div><span>AI DRAFT APPLIED</span><b>Review every field before creating</b></div><button title="Dismiss AI notice" onClick={() => setAiApplied(false)}><X size={14} /></button></div>}
 
       <div className="side-switch" role="group" aria-label="Order side">
         <button aria-pressed={state.side === "BUY"} className={state.side === "BUY" ? "active" : ""} onClick={() => dispatch({ type: "side", side: "BUY" })}>BUY</button>
@@ -615,7 +610,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
       )}
       {shownDraft && <a className="draft-link" href={`/ghost/${shownDraft.id}`}><StatusBadge status={shownDraft.status} /><span>{shownDraft.name}</span><CaretRight size={15} /></a>}
       <AnimatePresence>{compiler && <motion.div className="modal-backdrop replay-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setCompiler(null)}><motion.div className="replay-modal compiler-modal" role="dialog" aria-modal="true" aria-labelledby="compiler-title" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onClick={(event) => event.stopPropagation()}><CompilerPanel preview={compiler} close={() => setCompiler(null)} /></motion.div></motion.div>}</AnimatePresence>
-      </>}
     </aside>
   );
 }
