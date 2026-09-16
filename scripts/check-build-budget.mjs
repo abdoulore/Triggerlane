@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../apps/web/.next/static/", import.meta.url));
 const limits = {
-  // Back to the pre-rebuild ceiling now that ghost-app.tsx is deleted and only
-  // one interface ships. Lower it again once the landing is rebuilt too.
-  totalStaticBytes: 2_500_000,
-  totalJavaScriptBytes: 2_200_000,
-  largestJavaScriptBytes: 950_000,
+  // Set just above what one interface actually ships, measured after
+  // ghost-app.tsx was deleted: 2,000,684 static, 1,792,343 of it JavaScript,
+  // 718,489 in the largest chunk. A ceiling with half a megabyte of slack
+  // catches nothing, so these sit roughly 7% above the real numbers. Expect to
+  // lower them again when the landing stops carrying three.js.
+  totalStaticBytes: 2_150_000,
+  totalJavaScriptBytes: 1_920_000,
+  largestJavaScriptBytes: 780_000,
 };
 
 async function files(path) {

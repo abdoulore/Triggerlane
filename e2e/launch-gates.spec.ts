@@ -143,3 +143,34 @@ test("core routes stay inside their navigation budgets", async ({ page }) => {
     expect(timing.domContentLoadedMs, `${route.path} DOM budget`).toBeLessThan(10_000);
   }
 });
+
+/*
+ * A phone held sideways, a reader who enlarged the text, and a viewer at 200%
+ * zoom all get the same layout arithmetic wrong in different ways. The launch
+ * audit checked these three and nothing else did.
+ */
+for (const profile of [
+  { name: "landscape-phone", width: 844, height: 390, fontSize: null, zoom: "1" },
+  { name: "large-text", width: 1280, height: 720, fontSize: "125%", zoom: "1" },
+  { name: "zoom-200", width: 1280, height: 720, fontSize: null, zoom: "2" },
+] as const) {
+  test(`every screen stays usable at ${profile.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: profile.width, height: profile.height });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    for (const route of PRODUCT_ROUTES) {
+      await open(page, route.path, route.heading);
+      await page.evaluate(({ zoom, fontSize }) => {
+        document.documentElement.style.zoom = zoom;
+        if (fontSize) document.documentElement.style.fontSize = fontSize;
+      }, { zoom: profile.zoom, fontSize: profile.fontSize });
+      await page.waitForTimeout(350);
+      const measured = await page.evaluate(() => ({
+        doc: document.documentElement.scrollWidth,
+        vp: window.innerWidth,
+      }));
+      expect(measured.doc, `${route.path} overflows at ${profile.name}`).toBeLessThanOrEqual(measured.vp);
+      // The action a trader came for has to remain on screen.
+      await expect(page.getByText("Trades use virtual funds. No real assets move.")).toBeVisible();
+    }
+  });
+}
