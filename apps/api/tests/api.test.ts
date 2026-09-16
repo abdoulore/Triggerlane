@@ -320,6 +320,72 @@ describe("Ghost API", () => {
     expect(persisted.rows[0]?.published_at).not.toBeNull();
   });
 
+  it("prunes stale frames and observations without touching stored evidence", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const portfolioId = workspace.portfolio.id;
+    const old = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+    const frame = async (id: string, assembledAt: string) => {
+      await database.query(
+        `INSERT INTO evaluation_frames (id, portfolio_id, market, cutoff_at, assembled_at, mode, completeness, execution_eligible, observations)
+         VALUES ($1, $2, 'SOL/USDC', $3, $3, 'LIVE', 'COMPLETE', TRUE, $4)`,
+        [id, portfolioId, assembledAt, JSON.stringify(workspace.frame.observations)],
+      );
+    };
+    await frame("prune-orphan", old);
+    await frame("prune-evidence", old);
+    await frame("prune-newest", new Date().toISOString());
+
+    // An execution referencing a frame makes it evidence, whatever its age.
+    const ghost = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Evidence holder") })).json();
+    const reservationId = randomUUID();
+    await database.query(
+      "INSERT INTO capital_reservations (id, portfolio_id, ghost_id, asset, amount_decimal, status, version, created_at, updated_at) VALUES ($1,$2,$3,'SOL',1,'CONSUMED',1,NOW(),NOW())",
+      [reservationId, portfolioId, ghost.id],
+    );
+    const attemptId = randomUUID();
+    await database.query(
+      "INSERT INTO execution_attempts (id, ghost_id, configuration_version, trigger_frame_id, idempotency_key, status, created_at, updated_at) VALUES ($1,$2,1,'prune-evidence',$3,'FILLED',NOW(),NOW())",
+      [attemptId, ghost.id, `prune:${attemptId}`],
+    );
+    await database.query(
+      `INSERT INTO executions (id, ghost_id, portfolio_id, attempt_id, status, input_asset, input_amount, output_asset, output_amount, trigger_price, execution_price, modeled_slippage_bps, quote_model_version, idempotency_key, trigger_frame_id, settlement_frame_id, reservation_id, receipt, started_at, completed_at)
+       VALUES ($1,$2,$3,$4,'FILLED','SOL',1,'USDC',200,200,200,14,'sandbox-v1',$5,'prune-evidence','prune-evidence',$6,'{}',NOW(),NOW())`,
+      [randomUUID(), ghost.id, portfolioId, attemptId, `prune-exec:${attemptId}`, reservationId],
+    );
+
+    const observation = async (id: string, provenance: "LIVE" | "DEMO") => {
+      await database.query(
+        `INSERT INTO market_observations (id, portfolio_id, metric, value_decimal, unit, provider, provider_sequence, provenance, source_timestamp, received_at, portfolio_version)
+         VALUES ($1, $2, 'PRICE', 100, 'USDC_PER_SOL', 'fixture', NULL, $3, $4, $4, NULL)`,
+        [id, portfolioId, provenance, old],
+      );
+    };
+    await observation("prune-live-observation", "LIVE");
+    await observation("prune-demo-observation", "DEMO");
+    await database.query(
+      "INSERT INTO outbox_events (id, user_id, event_type, payload, created_at, published_at) VALUES ($1,$2,'ghost.status.updated','{}',$3,$3)",
+      ["prune-published-event", workspace.identity.id, old],
+    );
+
+    const pruned = await new GhostService(database).pruneExpiredData();
+    expect(pruned.frames).toBeGreaterThanOrEqual(1);
+
+    const survives = async (table: string, id: string) => {
+      const found = await database.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM ${table} WHERE id = $1`, [id]);
+      return Number(found.rows[0]?.count ?? 0) === 1;
+    };
+    expect(await survives("evaluation_frames", "prune-orphan")).toBe(false);
+    expect(await survives("evaluation_frames", "prune-evidence")).toBe(true);
+    expect(await survives("evaluation_frames", "prune-newest")).toBe(true);
+    expect(await survives("market_observations", "prune-live-observation")).toBe(false);
+    expect(await survives("market_observations", "prune-demo-observation")).toBe(true);
+    expect(await survives("outbox_events", "prune-published-event")).toBe(false);
+  });
+
   it("allows only one worker lease owner and supports takeover after expiry", async () => {
     const firstWorker = new GhostService(database);
     const secondWorker = new GhostService(database);

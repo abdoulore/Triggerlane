@@ -157,6 +157,10 @@ function publicGhost(row: GhostRow) {
 
 export class GhostService {
   private readonly executionAdapters = [new SandboxAutomationAdapter(), new RialoAutomationAdapter()];
+  // Retention runs on the same tick as everything else, so it is throttled
+  // rather than run every second.
+  private lastPruneAt = 0;
+  private readonly pruneIntervalMs = 10 * 60 * 1000;
 
   constructor(
     private readonly database: PGlite,
@@ -559,23 +563,60 @@ export class GhostService {
        FROM portfolios p
        WHERE p.status = 'ACTIVE'
          AND p.data_mode = 'LIVE'
-         AND (
-           EXISTS (
-             SELECT 1 FROM ghosts g
-             WHERE g.portfolio_id = p.id
-               AND (g.status = 'WATCHING' OR (g.status = 'PAUSED' AND g.pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')))
-           )
-           OR EXISTS (
-             SELECT 1 FROM sessions s
-             WHERE s.user_id = p.user_id
-               AND s.expires_at > NOW()
-               AND s.last_seen_at > NOW() - INTERVAL '30 seconds'
-           )
+         AND EXISTS (
+           SELECT 1 FROM ghosts g
+           WHERE g.portfolio_id = p.id
+             AND (g.status = 'WATCHING' OR (g.status = 'PAUSED' AND g.pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')))
          )
        ORDER BY p.id
        LIMIT $1`,
       [batchSize],
     );
+  }
+
+  /**
+   * A display-only frame for a Live portfolio with no active triggers, built
+   * from the provider's cached view rather than stored. Returns null when the
+   * view is not fresh or when the stored frame is already newer, so the caller
+   * keeps whatever it had. Never execution eligible: settlement only ever runs
+   * against frames the worker stored.
+   */
+  private async liveViewFrame(portfolio: PortfolioRow, stored: EvaluationFrame | null): Promise<EvaluationFrame | null> {
+    let view: MarketView;
+    try {
+      view = await this.marketProvider.view("1m");
+    } catch {
+      return null;
+    }
+    if (view.status !== "FRESH" || !view.snapshotId || !view.receivedAt || view.price.value == null || view.funding.value == null) return null;
+    if (stored && new Date(stored.assembledAt).getTime() >= new Date(view.receivedAt).getTime()) return null;
+
+    const sol = await this.balance(this.database, portfolio.id, "SOL");
+    const id = `view:${createHash("sha256").update(`${portfolio.id}:${view.snapshotId}`).digest("hex")}`;
+    const shared = { provider: view.provider, sourceTimestamp: view.sourceTimestamp, receivedAt: view.receivedAt, provenance: "LIVE" as const };
+    return {
+      id,
+      market: "SOL/USDC",
+      cutoffAt: view.receivedAt,
+      assembledAt: view.receivedAt,
+      mode: "LIVE",
+      completeness: "COMPLETE",
+      executionEligible: false,
+      observations: {
+        PRICE: { id: `${id}:price`, metric: "PRICE", value: view.price.value, unit: "USDC_PER_SOL", ...shared },
+        FUNDING: { id: `${id}:funding`, metric: "FUNDING", value: view.funding.value, unit: "RATIO", ...shared },
+        PNL: {
+          id: `${id}:pnl`,
+          metric: "PNL",
+          value: calculatePnlRatio(sol.quantity_decimal, sol.cost_basis_usdc_decimal ?? "0", view.price.value),
+          unit: "RATIO",
+          ...shared,
+          provider: "triggerlane-virtual-ledger",
+          portfolioVersion: portfolio.version,
+          derivedFromObservationIds: [`${id}:price`],
+        },
+      },
+    };
   }
 
   private async pauseLivePortfolio(portfolio: PortfolioRow, reason: string): Promise<number> {
@@ -673,7 +714,63 @@ export class GhostService {
     const live = await this.processLivePaperTick();
     for (const userId of live.userIds) publish(userId, { type: "market.frame.updated", mode: "LIVE", at: now() });
     const published = await this.publishOutbox(publish);
+    await this.pruneExpiredData();
     return { leaseAcquired: true, expired, liveFrames: live.frames, paused: live.paused, published };
+  }
+
+  /**
+   * Frames and observations accumulate every tick and nothing else removes them,
+   * so a long-lived deployment fills its volume. Anything an execution or an
+   * attempt refers to is evidence and is never removed, nor is the newest frame
+   * of each portfolio, which the workspace still reads.
+   */
+  async pruneExpiredData(limit = 500): Promise<{ frames: number; observations: number; outbox: number }> {
+    const now = Date.now();
+    if (now - this.lastPruneAt < this.pruneIntervalMs) return { frames: 0, observations: 0, outbox: 0 };
+    this.lastPruneAt = now;
+    const batchSize = Math.max(1, Math.min(Math.trunc(limit), 2_000));
+    const hours = Number(process.env.FRAME_RETENTION_HOURS ?? 24);
+    const cutoff = new Date(now - Math.max(1, hours) * 60 * 60 * 1000).toISOString();
+
+    const frames = await this.database.query(
+      `DELETE FROM evaluation_frames f
+       WHERE f.id = ANY(
+         SELECT c.id FROM evaluation_frames c
+         WHERE c.assembled_at < $1
+           AND NOT EXISTS (SELECT 1 FROM execution_attempts ea WHERE ea.trigger_frame_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.trigger_frame_id = c.id OR e.settlement_frame_id = c.id)
+           AND c.id <> (
+             SELECT latest.id FROM evaluation_frames latest
+             WHERE latest.portfolio_id = c.portfolio_id
+             ORDER BY latest.assembled_at DESC, latest.id DESC LIMIT 1
+           )
+         ORDER BY c.assembled_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    const observations = await this.database.query(
+      `DELETE FROM market_observations o
+       WHERE o.id = ANY(
+         SELECT c.id FROM market_observations c
+         WHERE c.received_at < $1 AND c.provenance = 'LIVE'
+         ORDER BY c.received_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    const outbox = await this.database.query(
+      `DELETE FROM outbox_events o
+       WHERE o.id = ANY(
+         SELECT c.id FROM outbox_events c
+         WHERE c.published_at IS NOT NULL AND c.published_at < $1
+         ORDER BY c.published_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    return {
+      frames: frames.affectedRows ?? 0,
+      observations: observations.affectedRows ?? 0,
+      outbox: outbox.affectedRows ?? 0,
+    };
   }
 
   async expireDueGhosts(limit = 100): Promise<number> {
@@ -891,6 +988,14 @@ export class GhostService {
   async workspace(userId: string) {
     const portfolio = await this.activePortfolio(this.database, userId);
     let frame = await this.latestFrame(this.database, portfolio.id);
+    // The worker only stores frames for portfolios with active triggers, so a
+    // Live account that is merely being looked at has no fresh stored frame.
+    // Serve an unstored one from the provider cache instead of writing a row
+    // per viewer per tick; it is display-only and never drives settlement.
+    if (portfolio.data_mode === "LIVE") {
+      const viewFrame = await this.liveViewFrame(portfolio, frame);
+      if (viewFrame) frame = viewFrame;
+    }
     frame ??= await this.createDemoFrame(this.database, portfolio, portfolio.demo_step);
 
     const balanceRows = await rows<BalanceRow>(

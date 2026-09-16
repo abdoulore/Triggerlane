@@ -287,6 +287,9 @@ CREATE INDEX IF NOT EXISTS ghosts_user_updated ON ghosts(user_id, updated_at DES
 CREATE INDEX IF NOT EXISTS ledger_transactions_portfolio_created ON ledger_transactions(portfolio_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS ledger_entries_transaction_created ON ledger_entries(transaction_id, created_at, asset);
 CREATE INDEX IF NOT EXISTS sessions_user_expiry_seen ON sessions(user_id, expires_at, last_seen_at);
+CREATE INDEX IF NOT EXISTS evaluation_frames_portfolio_assembled ON evaluation_frames(portfolio_id, assembled_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS market_observations_received ON market_observations(received_at);
+CREATE INDEX IF NOT EXISTS outbox_published ON outbox_events(published_at);
 `;
 
 export async function createDatabase(dataDir?: string): Promise<PGlite> {
