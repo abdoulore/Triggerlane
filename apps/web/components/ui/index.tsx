@@ -122,10 +122,22 @@ export function Dialog({ title, aside, onClose, children, footer }: {
 }) {
   const panel = useRef<HTMLDivElement>(null);
 
+  /*
+   * Focus belongs to the dialog's whole life, not to any one render. Callers
+   * pass an inline arrow for onClose, so keying this to it re-ran the effect on
+   * every parent render: the cleanup handed focus back mid-life, the next run
+   * captured the panel itself as the opener, and closing then sent focus to a
+   * node being unmounted, which lands on the body.
+   */
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     panel.current?.focus();
+    return () => {
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, []);
 
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -151,11 +163,7 @@ export function Dialog({ title, aside, onClose, children, footer }: {
     };
 
     window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      // Give the keyboard back to whatever opened this.
-      if (opener && document.contains(opener)) opener.focus();
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   return (

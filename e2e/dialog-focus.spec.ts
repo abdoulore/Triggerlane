@@ -11,6 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const POPUPS: Array<{ name: string; path: string; heading: string; opener: RegExp | string; dialog: string }> = [
   { name: "ledger", path: "/portfolio", heading: "Portfolio", opener: /Show ledger/, dialog: "Ledger" },
+  { name: "account", path: "/portfolio", heading: "Portfolio", opener: "Open account", dialog: "Account" },
 ];
 
 async function open(page: Page, path: string, heading: string) {
