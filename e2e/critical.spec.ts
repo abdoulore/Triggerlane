@@ -397,24 +397,11 @@ test("mobile monitoring does not overflow horizontally", async ({ page }) => {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth);
 });
 
-test("Replay runs complete historical frames and exposes trigger inspection", async ({ page }) => {
+test("Trade no longer offers replay of invented history", async ({ page }) => {
   await page.goto("/trade");
   await page.getByText("Risk and advanced settings", { exact: true }).click();
-  await page.getByRole("button", { name: "RUN DEMO REPLAY" }).click();
-  const dialog = page.getByRole("dialog", { name: /SOL profit lock historical Replay/i });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("7", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("42/42 COMPLETE SYNTHETIC FRAMES · DEMO REPLAY")).toBeVisible();
-  await expect(dialog.getByText("Historical simulations do not predict future performance.")).toBeVisible();
-
-  await dialog.getByRole("button", { name: "24H" }).click();
-  await expect(dialog.getByText("24/24 COMPLETE SYNTHETIC FRAMES · DEMO REPLAY")).toBeVisible();
-  await dialog.getByRole("button", { name: "Inspect trigger 1" }).click();
-  await expect(dialog.getByText("TRIGGER", { exact: true })).toBeVisible();
-
-  const accessibility = await new AxeBuilder({ page }).include(".replay-modal").withTags(["wcag2a", "wcag2aa"]).analyze();
-  const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
-  expect(serious).toEqual([]);
+  await expect(page.getByRole("button", { name: "RUN DEMO REPLAY" })).toHaveCount(0);
+  await expect(page.getByText("DEMO REPLAY")).toHaveCount(0);
 });
 
 test("Ideas offers concise starting points and hands one to Trade without arming it", async ({ page }, testInfo) => {
