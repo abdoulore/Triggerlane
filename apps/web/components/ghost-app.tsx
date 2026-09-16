@@ -35,7 +35,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { evaluateCondition, formatMetric, ghostDraftSchema, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
+import { evaluateCondition, formatMetric, fundingAprPercent, ghostDraftSchema, modeledSlippageBps, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { API_URL, ApiError, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
 import { GhostActions } from "./ghost-actions";
@@ -211,12 +211,10 @@ interface Workspace {
   reservations: CapitalReservation[];
 }
 
-interface Diagnostics {
-  ok: boolean;
-  averageResponseMs: number;
+interface EngineStatus {
+  status: "OPERATIONAL" | "DEGRADED";
+  workerActive: boolean;
   outboxPending: number;
-  executionAttemptsInFlight: number;
-  workerLease: { active: boolean; owner: string | null };
 }
 
 interface ReplayPoint {
@@ -456,8 +454,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const [state, dispatch] = useReducer(composerReducer, initialComposer);
   const [draft, setDraft] = useState<GhostRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [replay, setReplay] = useState<ReplayResult | null>(null);
-  const [replayPeriod, setReplayPeriod] = useState<"24H" | "7D" | "30D">("7D");
   const [loadedStrategy, setLoadedStrategy] = useState<Strategy | null>(null);
   const [composerMode, setComposerMode] = useState<"QUICK" | "AI">("QUICK");
   const [aiApplied, setAiApplied] = useState(false);
@@ -522,11 +518,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
     onError: (caught) => setError(caught instanceof Error ? caught.message : "Trigger could not start watching."),
   });
   const shownDraft = draft ? workspace.ghosts.find((ghost) => ghost.id === draft.id) ?? draft : null;
-  const runReplay = useMutation({
-    mutationFn: (period: "24H" | "7D" | "30D") => api<ReplayResult>("/api/replay", { method: "POST", body: JSON.stringify({ period, draft: state }) }),
-    onSuccess: (result) => { setReplay(result); setError(null); },
-    onError: (caught) => setError(caught instanceof Error ? caught.message : "Replay could not run."),
-  });
   const previewCompiler = useMutation({
     mutationFn: () => api<CompilerPreview>("/api/compiler/preview", { method: "POST", body: JSON.stringify(state) }),
     onSuccess: (result) => { setCompiler(result); setError(null); },
@@ -546,6 +537,9 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
   const commitmentAmount = state.side === "BUY" ? Number(state.amount) : Number(workspace.portfolio.balances.SOL.quantity) * Number(state.amount) / 100;
   const commitmentAsset = state.side === "BUY" ? "USDC" : "SOL";
   const canCommit = commitmentAmount > 0 && commitmentAmount <= Number(state.side === "BUY" ? workspace.portfolio.balances.USDC.available : workspace.portfolio.balances.SOL.available);
+  // Modeled impact never falls below 12 bps, so a tighter limit can qualify but never settle.
+  const estimatedSlippageBps = commitmentAmount > 0 ? modeledSlippageBps(state.side === "BUY" ? commitmentAmount : commitmentAmount * price) : 0;
+  const slippageTooTight = estimatedSlippageBps > state.maxSlippageBps;
 
   return (
     <aside className="composer-panel">
@@ -579,11 +573,11 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
           const onlyActive = state.conditions.length === 1;
           return <div className="builder-row active" key={metric}>
             <button className="builder-remove" type="button" aria-label={`Remove ${metricLabels[metric]} condition`} title={onlyActive ? "At least one condition is required" : `Remove ${metricLabels[metric]}`} disabled={onlyActive} onClick={() => { rememberedConditions.current[metric] = { ...condition }; dispatch({ type: "remove-condition", metric }); }}><X size={13} /></button>
-            <div className="builder-metric"><span>{metricLabels[metric]}</span><small>CURRENT {formatMetric(metric, current[metric].value)}</small></div>
+            <div className="builder-metric"><span>{metricLabels[metric]}</span><small>CURRENT {formatMetric(metric, current[metric].value)}{metric === "FUNDING" ? ` · ${fundingAprPercent(current.FUNDING.value)}% A YEAR` : ""}</small></div>
             <label className="builder-operator"><span>RULE</span><select aria-label={`${metric} operator`} value={condition.operator} onChange={(event) => { rememberedConditions.current[metric] = { ...condition, operator: event.target.value as "GTE" | "LTE" }; dispatch({ type: "condition", metric, field: "operator", value: event.target.value }); }}>
               <option value="GTE">at least</option><option value="LTE">at most</option>
             </select></label>
-            <label className="builder-target-field"><span>TARGET</span><div className="builder-target"><input aria-label={`${metric} target`} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => { const target = metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100); rememberedConditions.current[metric] = { ...condition, target }; dispatch({ type: "condition", metric, field: "target", value: target }); }} /><span>{metric === "PRICE" ? "$" : "%"}</span></div></label>
+            <label className="builder-target-field"><span>TARGET</span><div className="builder-target"><input aria-label={`${metric} target`} value={metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)} onChange={(event) => { const target = metric === "PRICE" ? event.target.value : String(Number(event.target.value) / 100); rememberedConditions.current[metric] = { ...condition, target }; dispatch({ type: "condition", metric, field: "target", value: target }); }} /><span>{metric === "PRICE" ? "$" : "%"}</span></div>{metric === "FUNDING" && <small style={{ color: Math.abs(Number(fundingAprPercent(condition.target))) > 60 ? "var(--amber)" : "var(--muted)" }}>= {fundingAprPercent(condition.target)}% a year</small>}</label>
           </div>;
         })}
       </div>
@@ -596,15 +590,16 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         <ShieldCheck size={17} /><span>{summary}</span><b>{quantity.format(commitmentAmount)} {commitmentAsset}</b>
       </div>
 
+      {slippageTooTight && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>This slippage limit is below the estimated price impact</b><small>About {estimatedSlippageBps} bps for this size, against your {state.maxSlippageBps} bps limit. The trigger can still be saved, but it will be blocked at settlement until the impact fits.</small></div></div>}
+
       <details className="composer-advanced">
         <summary>Risk and advanced settings<CaretRight size={15} /></summary>
         <div>
           <div className="constraint-row">
-            <label>Max slippage<div className="compact-input"><input type="number" min="1" max="500" value={state.maxSlippageBps} onChange={(event) => dispatch({ type: "field", field: "maxSlippageBps", value: Number(event.target.value) })} /><span>bps</span></div></label>
+            <label>Max slippage<div className="compact-input"><input type="number" min="1" max="500" value={state.maxSlippageBps} onChange={(event) => dispatch({ type: "field", field: "maxSlippageBps", value: Number(event.target.value) })} /><span>bps</span></div><small>Estimated {estimatedSlippageBps} bps for this size</small></label>
             <label>Expires<select value={state.expiresInHours} onChange={(event) => dispatch({ type: "field", field: "expiresInHours", value: Number(event.target.value) })}><option value={1}>1 hour</option><option value={24}>24 hours</option><option value={168}>7 days</option><option value={720}>30 days</option></select></label>
           </div>
           <button className="compiler-action" onClick={() => previewCompiler.mutate()} disabled={previewCompiler.isPending}><BracketsCurly size={17} />{previewCompiler.isPending ? "CHECKING..." : "VIEW TECHNICAL CONTRACT"}<span>Advanced · Virtual execution ready</span></button>
-          {capabilities.features.replay && <button className="replay-action" onClick={() => runReplay.mutate(replayPeriod)} disabled={runReplay.isPending}><ClockCounterClockwise size={17} />{runReplay.isPending ? "RUNNING DEMO REPLAY..." : "RUN DEMO REPLAY"}</button>}
         </div>
       </details>
       {error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{error}</b><small>No capital moved. Your editable Composer values remain in place.</small></div></div>}
@@ -619,7 +614,6 @@ function Composer({ workspace, capabilities, onCreated }: { workspace: Workspace
         </button>
       )}
       {shownDraft && <a className="draft-link" href={`/ghost/${shownDraft.id}`}><StatusBadge status={shownDraft.status} /><span>{shownDraft.name}</span><CaretRight size={15} /></a>}
-      <AnimatePresence>{replay && <motion.div className="modal-backdrop replay-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setReplay(null)}><motion.div className="replay-modal" role="dialog" aria-modal="true" aria-label={`${state.name} historical Replay`} initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onClick={(event) => event.stopPropagation()}><ReplayPanel result={replay} period={replayPeriod} onPeriod={(period) => { setReplayPeriod(period); runReplay.mutate(period); }} close={() => setReplay(null)} loading={runReplay.isPending} /></motion.div></motion.div>}</AnimatePresence>
       <AnimatePresence>{compiler && <motion.div className="modal-backdrop replay-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setCompiler(null)}><motion.div className="replay-modal compiler-modal" role="dialog" aria-modal="true" aria-labelledby="compiler-title" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} onClick={(event) => event.stopPropagation()}><CompilerPanel preview={compiler} close={() => setCompiler(null)} /></motion.div></motion.div>}</AnimatePresence>
       </>}
     </aside>
@@ -668,7 +662,7 @@ function AiComposer({ baseDraft, onApply }: { baseDraft: GhostDraft; onApply: (r
   </div>;
 }
 
-function ReplayPanel({ result, period, onPeriod, close, loading }: { result: ReplayResult; period: "24H" | "7D" | "30D"; onPeriod: (period: "24H" | "7D" | "30D") => void; close: () => void; loading: boolean }) {
+function RemovedReplayPanel({ result, period, onPeriod, close, loading }: { result: ReplayResult; period: "24H" | "7D" | "30D"; onPeriod: (period: "24H" | "7D" | "30D") => void; close: () => void; loading: boolean }) {
   const [index, setIndex] = useState(result.points.length - 1);
   useEffect(() => setIndex(result.points.length - 1), [result]);
   const point = result.points[index] ?? result.points[0]!;
@@ -865,7 +859,7 @@ function TradeView({ workspace, market, marketLoading, interval, onInterval, cap
           <div className="market-title"><span className="asset-emblem">S</span><div><span className="eyebrow">MARKET YOU'RE WATCHING</span><h1>SOL PERP <i>/</i> USDC</h1></div></div>
           <div className="market-price"><span>{market?.instrument.priceType === "MARK_PRICE" ? "CURRENT MARK PRICE" : "CURRENT SIMULATED MARK"}</span><motion.strong key={price ?? market?.status ?? "loading"} initial={{ opacity: .45, y: -3 }} animate={{ opacity: 1, y: 0 }}>{price == null ? "--" : `$${money.format(Number(price))}`}</motion.strong>{market?.change.value != null ? <small className={Number(market.change.value) >= 0 ? "positive" : "negative"}>{optionalPercent(market.change.value)} {market.change.label === "24H" ? "24H" : "SIMULATION PERIOD"}</small> : <small>{marketLoading ? "LOADING MARKET" : "CHANGE UNAVAILABLE"}</small>}</div>
           <div className={`market-context ${marketDetailsOpen ? "open" : ""}`}>
-            <div className="market-context-funding"><span>FUNDING</span><b>{optionalPercent(funding, 3)}</b><small>{market?.funding.period === "1H" ? "1H RATE" : "DEMO STEP"}</small></div>
+            <div className="market-context-funding"><span>FUNDING</span><b>{funding == null ? "--" : `${fundingAprPercent(funding)}% APR`}</b><small>{funding == null ? (market?.funding.period === "1H" ? "1H RATE" : "DEMO STEP") : `${optionalPercent(funding, 4)} ${market?.funding.period === "1H" ? "PER HOUR" : "PER DEMO STEP"}`}</small></div>
             <div className="market-context-pnl"><span>POSITION P&amp;L</span><b className={valuation.pnlRatio != null && Number(valuation.pnlRatio) >= 0 ? "positive" : "negative"}>{optionalPercent(valuation.pnlRatio, 1)}</b><small>{valuation.pnlRatio == null ? "VALUATION UNAVAILABLE" : "SAME MARKET SNAPSHOT"}</small></div>
             <div className="market-context-updated"><span>{modeIsLive ? "UPDATED" : "EVIDENCE"}</span><b>{modeIsLive ? (observedAt ? ageLabel(observedAt) : "--") : (market ? "STORED STEP" : "--")}</b><small>{market?.status ?? (marketLoading ? "LOADING" : "UNAVAILABLE")}</small></div>
           </div>
@@ -1340,7 +1334,7 @@ export function GhostApp({ view, ghostId, triggerSection = "active" }: { view: A
     enabled: Boolean(workspace),
     refetchInterval: marketMode === "LIVE" ? 5_000 : false,
   });
-  const diagnosticsQuery = useQuery({ queryKey: ["diagnostics"], queryFn: () => api<Diagnostics>("/health/diagnostics"), enabled: Boolean(workspace), refetchInterval: 5000 });
+  const engineQuery = useQuery({ queryKey: ["engine-status"], queryFn: () => api<EngineStatus>("/api/engine-status"), enabled: Boolean(workspace), refetchInterval: 30_000 });
   const capabilitiesQuery = useQuery({ queryKey: ["capabilities"], queryFn: () => api<RuntimeCapabilities>("/api/capabilities") });
 
   useEffect(() => {
@@ -1436,7 +1430,7 @@ export function GhostApp({ view, ghostId, triggerSection = "active" }: { view: A
   const provider = providerLabel(market?.provider ?? (modeIsLive ? "Hyperliquid" : workspace.frame.observations.PRICE.provider));
   const feedStatus = marketQuery.isPending ? "LOADING" : market?.status ?? "UNAVAILABLE";
   const sourceTime = market?.sourceTimestamp ? dateTime(market.sourceTimestamp) : market?.receivedAt ? `RECEIVED ${dateTime(market.receivedAt)}` : "UNAVAILABLE";
-  const engineStatus = diagnosticsQuery.data?.workerLease.active ? "OPERATIONAL" : diagnosticsQuery.data ? "RECONNECTING" : "CHECKING";
+  const engineStatus = engineQuery.data ? (engineQuery.data.workerActive ? "OPERATIONAL" : "RECONNECTING") : "CHECKING";
 
   return (
     <AppShell>
@@ -1449,14 +1443,14 @@ export function GhostApp({ view, ghostId, triggerSection = "active" }: { view: A
         </div>
       </header>
       <AnimatePresence>{(connectionsOpen || accountOpen) && <motion.button className="menu-backdrop" aria-label="Close open menu" onClick={() => { if (accountOpen) accountButtonRef.current?.focus(); if (connectionsOpen) environmentButtonRef.current?.focus(); setConnectionsOpen(false); setAccountOpen(false); setClearConfirmationOpen(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
-      <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view} close={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} /></>}</AnimatePresence>
+      <AnimatePresence>{onboardingOpen && <><motion.button className="drawer-backdrop onboarding-backdrop" aria-label="Close beginner guide" onClick={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /><OnboardingPanel view={view === "ghosts" && triggerSection === "past" ? "history" : view} close={() => { setOnboardingOpen(false); accountButtonRef.current?.focus(); }} /></>}</AnimatePresence>
       <AnimatePresence>{connectionsOpen && <motion.div ref={environmentDialogRef} tabIndex={-1} id="simulation-popover" className="popover simulation-menu" role="dialog" aria-modal="false" aria-label="Paper trading settings" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
         <div className="simulation-menu-heading"><div><span className="eyebrow">PAPER ACCOUNT</span><strong>{modeIsLive ? "Live market execution" : "Guided Scenario"}</strong></div><span className="eligible">VIRTUAL EXECUTION</span></div>
         <div className="simulation-warning paper-market-status"><Broadcast size={16} /><span><b>{modeIsLive ? "Live market data" : "Deterministic lesson"}</b><small>{modeIsLive ? "Fresh Hyperliquid observations can trigger virtual trades." : "Stored steps let you learn and replay trigger behavior."}</small></span></div>
         <div className="simulation-mode-switch" role="group" aria-label="Market data mode"><button className={!modeIsLive ? "active" : ""} aria-pressed={!modeIsLive} disabled={setMode.isPending || !modeIsLive} onClick={() => setMode.mutate("DEMO")}>GUIDED</button><button className={modeIsLive ? "active" : ""} aria-pressed={modeIsLive} disabled={setMode.isPending || modeIsLive} onClick={() => setMode.mutate("LIVE")}>{setMode.isPending ? "SWITCHING..." : "LIVE DATA"}</button></div>
         {setMode.error && <div className="inline-error menu-action-error" role="alert"><Warning size={15} /><span><b>Mode did not change</b><small>{setMode.error instanceof Error ? setMode.error.message : "Try again."}</small></span></div>}
         <dl className="simulation-summary"><div><dt>Feed</dt><dd>{feedStatus}</dd></div><div><dt>Source</dt><dd>{provider}</dd></div><div><dt>Execution</dt><dd>VIRTUAL</dd></div><div><dt>Snapshot</dt><dd>{market?.snapshotId?.slice(0, 12) ?? "UNAVAILABLE"}</dd></div></dl>
-        <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {diagnosticsQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>VIRTUAL · AVAILABLE</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
+        <details className="simulation-details"><summary>CONNECTION DETAILS<CaretRight size={14} /></summary><div><span><Broadcast size={15} />Price and funding</span><b>{provider} · {sourceTime}</b></div><div><span><BrandIcon size={15} />Trigger engine</span><b>{engineStatus} · {engineQuery.data?.outboxPending ?? 0} pending</b></div><div><span><Lightning size={15} />Execution</span><b>VIRTUAL · AVAILABLE</b></div><p>Rialo remains unavailable and is not reported as connected.</p></details>
       </motion.div>}</AnimatePresence>
       <AnimatePresence>{accountOpen && <motion.div ref={accountDialogRef} tabIndex={-1} id="account-popover" className="popover account" role="dialog" aria-modal="false" aria-label="Account" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}><span className="eyebrow">ACCOUNT</span><strong>{workspace.identity.label}</strong><div className="account-capital" aria-label="Account balances"><header><span>BALANCES</span><small>AVAILABLE / RESERVED</small></header>{(["USDC", "SOL"] as const).map((asset) => { const balance = workspace.portfolio.balances[asset]; return <div className="account-balance-row" key={asset}><b>{asset}</b><span>{quantity.format(Number(balance.available))}</span><small>{quantity.format(Number(balance.reserved))} reserved</small></div>; })}</div><details className="account-details"><summary>Account details<CaretRight size={14} /></summary><p className="account-boundary">This account is available only in this browser. There is no sign-in or recovery if its access cookie is removed.</p><dl className="account-access"><div><dt>ACCESS EXPIRES</dt><dd>{sessionExpiresAt ? dateTime(sessionExpiresAt) : "UNKNOWN"}</dd></div><div><dt>DATA STORAGE</dt><dd>SERVER STORED</dd></div></dl><small>{workspace.identity.id.slice(0, 18)}...</small></details><button onClick={() => { setAccountOpen(false); setOnboardingOpen(true); }}><Sparkle size={16} />NEW HERE?</button>{!clearConfirmationOpen ? <button className="account-danger" onClick={() => setClearConfirmationOpen(true)}><Power size={16} />CLEAR BROWSER ACCESS</button> : <div className="account-clear-confirm" role="alert"><b>End access from this browser?</b><p>Your stored paper data will not be deleted, but this browser cannot recover or reopen it afterward.</p><div><button onClick={() => setClearConfirmationOpen(false)}>KEEP ACCESS</button><button className="account-danger" disabled={clearSession.isPending} onClick={() => clearSession.mutate()}>{clearSession.isPending ? "CLEARING..." : "END ACCESS"}</button></div>{clearSession.error && <small role="alert">{clearSession.error instanceof Error ? clearSession.error.message : "Access could not be cleared."}</small>}</div>}</motion.div>}</AnimatePresence>
       {view === "trade" && <TradeView workspace={workspace} market={market} marketLoading={marketQuery.isPending || marketQuery.isFetching && !market} interval={marketInterval} onInterval={setMarketInterval} capabilities={capabilities} />}
