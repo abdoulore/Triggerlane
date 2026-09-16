@@ -110,13 +110,16 @@ test("a trade stopped at settlement keeps its evidence", async ({ page }) => {
   });
   expect(created.id).toBeTruthy();
 
-  // The worker settles on its own cadence, so wait for the attempt to land.
+  // The worker settles on its own cadence, and a cold stack can take a while.
+  // This budget has to sit inside the 45s per-test timeout: a 60s poll can
+  // never finish, so the test died of its own timeout rather than reporting.
+  test.slow();
   await expect.poll(async () => page.evaluate(async () => {
     const workspace = await (await fetch("/api/workspace", { credentials: "include" })).json() as {
       executionAttempts: Array<{ ghostName: string }>;
     };
     return workspace.executionAttempts.some((attempt) => attempt.ghostName === "Blocked evidence trigger");
-  }), { timeout: 60_000, intervals: [1_000] }).toBe(true);
+  }), { timeout: 90_000, intervals: [1_000] }).toBe(true);
 
   await page.goto("/ghosts?view=past");
   await expect(page.getByRole("button", { name: /^Finished/ })).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
