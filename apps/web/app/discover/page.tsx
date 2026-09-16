@@ -1,5 +1,5 @@
-import { GhostApp } from "@/components/ghost-app";
+import { IdeasScreen } from "@/features/ideas/ideas-screen";
 
 export default function DiscoverPage() {
-  return <GhostApp view="discover" />;
+  return <IdeasScreen />;
 }

@@ -58,3 +58,29 @@ test("the rebuilt Trade screen passes the accessibility gate", async ({ page }) 
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious).toEqual([]);
 });
+
+test("a strategy from Ideas loads into the form without placing anything", async ({ page }) => {
+  await page.goto("/trade");
+  await expect(page.getByText("SOL-PERP")).toBeVisible();
+  const before = await page.evaluate(async () =>
+    ((await (await fetch("/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
+
+  await page.goto("/trade?strategy=euphoria-exit");
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Euphoria Exit", { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Sell", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Amount")).toHaveValue("25");
+  await expect(page.getByText("From Ideas")).toBeVisible();
+
+  // The parameter is dropped so a refresh cannot overwrite later edits.
+  await expect(page).toHaveURL(/\/trade$/);
+
+  // Loading a starting point places nothing and reserves nothing.
+  const after = await page.evaluate(async () =>
+    ((await (await fetch("/api/ghosts", { credentials: "include" })).json()) as unknown[]).length);
+  expect(after).toBe(before);
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue("SOL entry");
+  await expect(page.getByText("From Ideas")).toHaveCount(0);
+});
+

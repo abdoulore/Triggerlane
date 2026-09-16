@@ -174,6 +174,25 @@ export interface Workspace {
   reservations: CapitalReservation[];
 }
 
+/** A starting point from the catalog. Its draft is a trigger, not a trigger. */
+export interface Strategy {
+  id: string;
+  name: string;
+  category: "Accumulation" | "Profit Taking" | "Protection";
+  description: string;
+  thesis: string;
+  featured: boolean;
+  metrics: Metric[];
+  draft: GhostDraft;
+}
+
+export interface StrategyCatalog {
+  title: string;
+  categories: string[];
+  capabilities: { market: string; metrics: Metric[]; unsupportedAdvancedMetrics: string[] };
+  strategies: Strategy[];
+}
+
 export interface EngineStatus {
   status: "OPERATIONAL" | "DEGRADED";
   workerActive: boolean;

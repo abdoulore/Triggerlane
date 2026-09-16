@@ -5,7 +5,7 @@ import { useEffect, useReducer, useState } from "react";
 import { evaluateCondition, fundingAprPercent, modeledSlippageBps, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
 import { api } from "@/lib/api";
 import { amount, conditionChip, fundingApr, fundingHourly, metricLabel, operatorLabel, percent, timeLeft, usd } from "@/lib/format";
-import type { Trigger, Workspace } from "@/lib/types";
+import type { StrategyCatalog, Trigger, Workspace } from "@/lib/types";
 import { isTerminal } from "@/lib/types";
 import { useLiveEvents } from "@/lib/use-live-events";
 import { AppShell } from "@/components/app-shell";
@@ -20,7 +20,8 @@ type Action =
   | { type: "field"; field: "name" | "amount"; value: string }
   | { type: "condition"; metric: Metric; field: "operator" | "target"; value: string }
   | { type: "add"; metric: Metric }
-  | { type: "remove"; metric: Metric };
+  | { type: "remove"; metric: Metric }
+  | { type: "load"; draft: Draft };
 
 const defaults: Record<Metric, Draft["conditions"][number]> = {
   PRICE: { metric: "PRICE", operator: "LTE", target: "178" },
@@ -39,6 +40,16 @@ const initial: Draft = {
 };
 
 function reducer(state: Draft, action: Action): Draft {
+  // A strategy arrives as a whole draft. Replaying it through the other actions
+  // would fight them: choosing a side resets the amount and the name.
+  if (action.type === "load") {
+    return {
+      ...action.draft,
+      conditions: [...action.draft.conditions].sort(
+        (left, right) => conditionOrder.indexOf(left.metric) - conditionOrder.indexOf(right.metric),
+      ),
+    };
+  }
   if (action.type === "side") {
     return {
       ...state,
@@ -75,6 +86,32 @@ export function TradeScreen() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, dispatch] = useReducer(reducer, initial);
+  const [loaded, setLoaded] = useState<string | null>(null);
+
+  // Ideas hands a strategy over as ?strategy=<id>. Load its draft once, then
+  // drop the parameter so a refresh does not silently overwrite later edits.
+  useEffect(() => {
+    if (!ready) return;
+    const id = new URLSearchParams(window.location.search).get("strategy");
+    if (!id) return;
+    let cancelled = false;
+    api<StrategyCatalog>("/api/strategies")
+      .then((catalog) => {
+        if (cancelled) return;
+        const strategy = catalog.strategies.find((item) => item.id === id);
+        if (!strategy) return;
+        dispatch({ type: "load", draft: strategy.draft });
+        setLoaded(strategy.name);
+        window.history.replaceState({}, "", "/trade");
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [ready]);
+
+  const clearStrategy = () => {
+    dispatch({ type: "load", draft: initial });
+    setLoaded(null);
+  };
 
   useEffect(() => {
     api<{ expiresAt: string }>("/api/session/anonymous", { method: "POST", body: JSON.stringify({ initialMode: "LIVE" }) })
@@ -195,6 +232,34 @@ export function TradeScreen() {
             </>
           }
         >
+          {loaded && (
+            <Card
+              title="From Ideas"
+              aside={
+                <button
+                  type="button"
+                  className={ui.muted}
+                  onClick={clearStrategy}
+                  style={{ padding: 0, background: "transparent", border: 0, fontSize: 11, cursor: "pointer" }}
+                >
+                  Clear
+                </button>
+              }
+            >
+              <span style={{ fontWeight: 600 }}>{loaded}</span>
+              <span className={ui.muted} style={{ fontSize: 11 }}>Nothing is placed until you place it.</span>
+            </Card>
+          )}
+
+          <Card title="Trigger name">
+            <input
+              aria-label="Trigger name"
+              value={draft.name}
+              onChange={(event) => dispatch({ type: "field", field: "name", value: event.target.value })}
+              style={{ width: "100%", padding: 0, color: "var(--text)", background: "transparent", border: 0, fontSize: 14 }}
+            />
+          </Card>
+
           <Card title="Amount" aside={<span className={`${ui.mono} ${ui.muted}`} style={{ fontSize: 11 }}>{draft.side === "BUY" ? "USDC" : "% of SOL"}</span>} focused>
             <input
               className={ui.mono}
@@ -286,7 +351,6 @@ export function TradeScreen() {
             </div>
           </Card>
 
-          <SecondaryButton onClick={() => dispatch({ type: "field", field: "name", value: draft.name })}>Save as draft</SecondaryButton>
         </ScrollRail>
       </div>
     </AppShell>
