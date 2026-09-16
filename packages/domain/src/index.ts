@@ -345,7 +345,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     thesis: "Overheating exit",
     featured: true,
     metrics: ["PRICE", "PNL", "FUNDING"],
-    draft: { name: "Euphoria Exit", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 50, expiresInHours: 168, conditions: [{ metric: "PRICE", operator: "GTE", target: "280" }, { metric: "FUNDING", operator: "GTE", target: "0.0005" }, { metric: "PNL", operator: "GTE", target: "0.1" }] },
+    draft: { name: "Euphoria Exit", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 50, expiresInHours: 168, conditions: [{ metric: "PRICE", operator: "GTE", target: "280" }, { metric: "FUNDING", operator: "GTE", target: "0.00002" }, { metric: "PNL", operator: "GTE", target: "0.1" }] },
   },
   {
     id: "downside-break",
@@ -355,7 +355,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     thesis: "Loss containment",
     featured: true,
     metrics: ["PRICE", "FUNDING", "PNL"],
-    draft: { name: "Downside Break", side: "SELL", amount: "50", amountType: "POSITION_PERCENT", maxSlippageBps: 75, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "230" }, { metric: "FUNDING", operator: "LTE", target: "-0.0002" }, { metric: "PNL", operator: "LTE", target: "-0.08" }] },
+    draft: { name: "Downside Break", side: "SELL", amount: "50", amountType: "POSITION_PERCENT", maxSlippageBps: 75, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "230" }, { metric: "FUNDING", operator: "LTE", target: "-0.000005" }, { metric: "PNL", operator: "LTE", target: "-0.08" }] },
   },
   {
     id: "price-breakout",
@@ -625,6 +625,13 @@ export function buildSandboxQuote(args: {
 
 export function isTerminal(status: GhostStatus): boolean {
   return ["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(status);
+}
+
+/** Hyperliquid reports funding per hour; traders compare funding as an annual rate. */
+export const FUNDING_HOURS_PER_YEAR = 8760;
+
+export function fundingAprPercent(hourlyRatio: Decimal.Value): string {
+  return new Decimal(hourlyRatio).mul(FUNDING_HOURS_PER_YEAR).mul(100).toDecimalPlaces(1).toFixed();
 }
 
 export function formatMetric(metric: Metric, value: Decimal.Value): string {

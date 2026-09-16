@@ -8,6 +8,7 @@ import {
   evaluateCondition,
   evaluateGhost,
   evaluateReplay,
+  fundingAprPercent,
   ghostDraftSchema,
   ghostIntelligence,
   modeledSlippageBps,
@@ -98,6 +99,21 @@ describe("Ghost domain", () => {
       expect(strategy.metrics.every((metric) => ["PRICE", "FUNDING", "PNL"].includes(metric))).toBe(true);
     }
     expect(STRATEGY_TEMPLATES.some((strategy) => strategy.draft.conditions.length === 1)).toBe(true);
+  });
+
+  it("converts hourly funding into the annual rate traders compare", () => {
+    expect(fundingAprPercent("0.00001")).toBe("8.8");
+    expect(fundingAprPercent("0.0005")).toBe("438");
+    expect(fundingAprPercent("-0.000005")).toBe("-4.4");
+    expect(fundingAprPercent("0")).toBe("0");
+  });
+
+  it("keeps strategy funding targets inside a reachable annual range", () => {
+    for (const strategy of STRATEGY_TEMPLATES) {
+      const funding = strategy.draft.conditions.find((condition) => condition.metric === "FUNDING");
+      if (!funding) continue;
+      expect(Math.abs(Number(fundingAprPercent(funding.target)))).toBeLessThanOrEqual(60);
+    }
   });
 
   it("parses a supported natural-language Ghost into strict domain units", () => {
