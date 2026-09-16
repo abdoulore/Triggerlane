@@ -167,6 +167,11 @@ test("mobile production profile stays stable and bounds 3D resources", async ({ 
 });
 
 test("every public and product page passes the launch accessibility gate", async ({ page }) => {
+  // Analyse settled pages. Entry and scroll reveals fade through intermediate
+  // colours, and Axe sampling one of those frames reports contrast failures for
+  // pairs that never appear at rest. The visual audit above disables motion for
+  // the same reason.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Trade the whole moment." })).toBeVisible();
   expect(await seriousAxeViolations(page)).toEqual([]);
