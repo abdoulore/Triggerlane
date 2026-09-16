@@ -164,8 +164,6 @@ scripts/        Build-budget checks
 
 The automated suite covers condition evaluation, idempotent mutations, reservation conflicts, stale and out-of-order data, restart recovery, one-time settlement, ledger integrity, seven release viewports from 360px to 1920px, accessibility, reduced motion, non-WebGL fallbacks, and production bundle budgets.
 
-Read [Launch Audit](docs/LAUNCH_AUDIT.md) for the exact contract.
-
 ## Security
 
 Do not use this build with real funds, private keys, exchange credentials, or production trading accounts. To report a vulnerability, follow [SECURITY.md](SECURITY.md) and avoid filing a public issue containing sensitive details.
