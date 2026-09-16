@@ -357,6 +357,10 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
 
   app.get("/api/live-market", { preHandler: requireSession }, async () => service.liveMarket());
 
+  // Session-guarded worker health for the product UI. /health/diagnostics stays
+  // operations-only, so polling it from the browser 401s in production.
+  app.get("/api/engine-status", { preHandler: requireSession }, async () => service.engineStatus());
+
   app.get("/api/events", { preHandler: requireSession }, async (request, reply) => {
     const sessionKey = request.sessionToken!;
     const sessionConnections = sseBySession.get(sessionKey) ?? 0;

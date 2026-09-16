@@ -1718,6 +1718,15 @@ export class GhostService {
     });
   }
 
+  async engineStatus(): Promise<{ status: "OPERATIONAL" | "DEGRADED"; workerActive: boolean; outboxPending: number }> {
+    const [lease, outbox] = await Promise.all([
+      one<{ expires_at: string }>(this.database, "SELECT expires_at FROM worker_leases WHERE partition_key = 'SOL/USDC'"),
+      one<{ count: string }>(this.database, "SELECT COUNT(*)::text AS count FROM outbox_events WHERE published_at IS NULL"),
+    ]);
+    const workerActive = Boolean(lease && new Date(lease.expires_at).getTime() > Date.now());
+    return { status: workerActive ? "OPERATIONAL" : "DEGRADED", workerActive, outboxPending: Number(outbox?.count ?? 0) };
+  }
+
   async liveMarket(): Promise<MarketView> {
     return this.marketProvider.view("5m");
   }

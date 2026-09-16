@@ -29,6 +29,9 @@ describe("Ghost API", () => {
   const mutationHeaders = (sessionCookie = cookie) => ({ cookie: sessionCookie, "idempotency-key": randomUUID() });
 
   beforeAll(async () => {
+    // Replay is off by default now that the UI no longer offers it; these tests
+    // still cover the endpoint's contract for anyone who turns it back on.
+    process.env.ENABLE_REPLAY = "true";
     database = await createDatabase(":memory:");
     app = await buildServer(database);
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
@@ -220,6 +223,17 @@ describe("Ghost API", () => {
     expect(attempt.frame).toMatchObject({ completeness: "COMPLETE", executionEligible: true });
     expect(attempt.reason.message).toContain("exceeded the configured limit");
     expect(attempt.reason.metadata.quote.modelVersion).toBe("sandbox-v1");
+  });
+
+  it("reports engine status to the product UI without operations credentials", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/engine-status", headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(["OPERATIONAL", "DEGRADED"]).toContain(body.status);
+    expect(typeof body.workerActive).toBe("boolean");
+    expect(typeof body.outboxPending).toBe("number");
+    const anonymous = await app.inject({ method: "GET", url: "/api/engine-status" });
+    expect(anonymous.statusCode).toBe(401);
   });
 
   it("replays an arm request idempotently", async () => {
