@@ -320,6 +320,29 @@ describe("Ghost API", () => {
     expect(persisted.rows[0]?.published_at).not.toBeNull();
   });
 
+  it("creates a trigger on a live account that has no stored frame yet", async () => {
+    // The worker only stores frames for portfolios that already hold a trigger,
+    // so the first trigger on a live account is created before any frame exists.
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "LIVE" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: liveCookie },
+      payload: { name: "First live trigger", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 60, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "GTE", target: "9999" }] },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().evaluations).toHaveLength(1);
+
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+    expect(armed.statusCode).toBe(200);
+    expect(armed.json().status).toBe("WATCHING");
+
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/cancel`, headers: mutationHeaders(liveCookie) });
+  });
+
   it("stores one frame while the market is unchanged, and another when it moves", async () => {
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
     const header = session.headers["set-cookie"]!;
