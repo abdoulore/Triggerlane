@@ -1,6 +1,6 @@
-import { GhostApp } from "@/components/ghost-app";
+import { TriggersScreen } from "@/features/triggers/triggers-screen";
 
 export default async function GhostsPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   const params = await searchParams;
-  return <GhostApp view="ghosts" triggerSection={params.view === "past" ? "past" : "active"} />;
+  return <TriggersScreen initialFilter={params.view === "past" ? "FINISHED" : "WATCHING"} />;
 }

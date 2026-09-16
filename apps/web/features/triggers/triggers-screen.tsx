@@ -48,10 +48,11 @@ function outcomeTone(status: string): "up" | "warn" | "muted" {
   return "muted";
 }
 
-export function TriggersScreen() {
+/** `initialFilter` lets /ghosts?view=past open straight on the finished list. */
+export function TriggersScreen({ initialFilter = "WATCHING" }: { initialFilter?: Filter } = {}) {
   const queryClient = useQueryClient();
   const [ready, setReady] = useState(false);
-  const [filter, setFilter] = useState<Filter>("WATCHING");
+  const [filter, setFilter] = useState<Filter>(initialFilter);
   const [failed, setFailed] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
 

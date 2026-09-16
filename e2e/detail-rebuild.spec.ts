@@ -33,7 +33,7 @@ async function armedTrigger(page: Page) {
   });
 
   // Load a rebuilt screen first so the session bootstrap has run.
-  await page.goto("/triggers2");
+  await page.goto("/ghosts");
   await expect(page.getByRole("button", { name: /Watching \(/ })).toBeVisible();
   const created = await page.evaluate(async (payload) => {
     const trigger = await (await fetch("/api/ghosts", {

@@ -19,7 +19,7 @@ const blockedDraft = {
 };
 
 async function ready(page: Page) {
-  await page.goto("/triggers2");
+  await page.goto("/ghosts");
   await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 

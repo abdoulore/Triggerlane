@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 /**
- * The rebuilt Triggers screen at /triggers2, served alongside the current
+ * The rebuilt Triggers screen, now serving /ghosts, with the finished list
  * /ghosts. One wide table: conditions as chips, distance to firing, locked
  * capital, state, and the actions that change it.
  */
@@ -21,7 +21,7 @@ const draft = {
 };
 
 async function placeTrigger(page: import("@playwright/test").Page) {
-  await page.goto("/triggers2");
+  await page.goto("/ghosts");
   // Wait for the loaded screen, not the loading line. Playwright matches text
   // as a case-insensitive substring, so "Triggers" also matches "Loading
   // triggers…", and the session bootstrap would not have finished yet.
@@ -78,4 +78,17 @@ test("the rebuilt Triggers screen passes the accessibility gate", async ({ page 
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   const serious = accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
   expect(serious).toEqual([]);
+});
+
+test("a deep link to the past view opens the finished list", async ({ page }) => {
+  await page.goto("/ghosts?view=past");
+  await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: /^Finished/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /^Watching/ })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("the history route still reaches the finished list", async ({ page }) => {
+  await page.goto("/history");
+  await expect(page).toHaveURL(/\/ghosts\?view=past/);
+  await expect(page.getByRole("button", { name: /^Finished/ })).toHaveAttribute("aria-pressed", "true");
 });
