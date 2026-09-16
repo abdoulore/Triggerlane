@@ -24,7 +24,6 @@ import {
   Power,
   Printer,
   Pulse,
-  Question,
   ShieldCheck,
   Sparkle,
   SlidersHorizontal,
@@ -35,8 +34,8 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { evaluateCondition, formatMetric, fundingAprPercent, ghostDraftSchema, modeledSlippageBps, valuePortfolio, type AiComposeResult, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
-import { API_URL, ApiError, api } from "@/lib/api";
+import { evaluateCondition, formatMetric, fundingAprPercent, ghostDraftSchema, modeledSlippageBps, valuePortfolio, type GhostDraft, type MarketView, type Metric } from "@ghost/domain";
+import { API_URL, api } from "@/lib/api";
 import { GhostCoreScene, type GhostCoreSceneCondition } from "./ghost-detail/ghost-core-scene";
 import { GhostActions } from "./ghost-actions";
 import { LoadingView } from "./loading-view";
@@ -217,25 +216,6 @@ interface EngineStatus {
   outboxPending: number;
 }
 
-interface ReplayPoint {
-  frameId: string;
-  at: string;
-  readyCount: number;
-  triggered: boolean;
-  values: Record<Metric, string>;
-  evaluations: Evaluation[];
-}
-
-interface ReplayResult {
-  id: string;
-  status: "COMPLETE";
-  label: string;
-  provider: { name: string; mode: "HISTORICAL"; provenance: "DEMO"; liveHistory: false };
-  disclaimer: string;
-  summary: { period: "24H" | "7D" | "30D"; triggerCount: number; firstTriggerAt: string | null; latestTriggerAt: string | null; medianWatchingHours: number; simulatedOutcomePercent: string; frameCount: number; completeFrameCount: number };
-  points: ReplayPoint[];
-}
-
 interface Strategy {
   id: string;
   name: string;
@@ -252,10 +232,6 @@ interface StrategyCatalog {
   categories: Array<"Popular" | "Accumulation" | "Profit Taking" | "Protection" | "Advanced">;
   capabilities: { market: string; metrics: Metric[]; unsupportedAdvancedMetrics: string[] };
   strategies: Strategy[];
-}
-
-interface AiComposeResponse extends AiComposeResult {
-  parser: { mode: "DETERMINISTIC"; modelProvider: null; supportedMarket: string; supportedMetrics: Metric[] };
 }
 
 interface CompilerPreview {
@@ -628,118 +604,6 @@ function CompilerPanel({ preview, close }: { preview: CompilerPreview; close: ()
     <details className="compiler-blockers"><summary>Why Rialo cannot compile yet · {rialo.unsupported.length} blockers</summary>{rialo.unsupported.map((item, index) => <div key={`${item.code}-${item.field}-${index}`}><code>{item.code}</code><p>{item.message}</p></div>)}</details>
     <div className="compiler-notice"><Warning size={17} /><p>{preview.notice}</p></div>
   </section>;
-}
-
-function AiComposer({ baseDraft, onApply }: { baseDraft: GhostDraft; onApply: (result: AiComposeResponse) => void }) {
-  const [prompt, setPrompt] = useState("Sell half my SOL when it reaches $300, but only if funding exceeds 0.05% and my profit is at least 40%. Maximum 0.5% slippage for 7 days.");
-  const [result, setResult] = useState<AiComposeResponse | null>(null);
-  const compose = useMutation({
-    mutationFn: () => api<AiComposeResponse>("/api/ai/compose", { method: "POST", body: JSON.stringify({ prompt, baseDraft }) }),
-    onSuccess: setResult,
-  });
-  return <div className="ai-composer">
-    <label className="field-label" htmlFor="ghost-prompt">Describe your trigger</label>
-    <textarea id="ghost-prompt" value={prompt} onChange={(event) => { setPrompt(event.target.value); setResult(null); }} maxLength={600} />
-    <div className="ai-prompt-foot"><span>{prompt.length}/600</span><small>Deterministic input supports SOL price, funding, position P&amp;L, amount, slippage, and expiry.</small></div>
-    {compose.error && <div className="inline-error safety-error" role="alert"><Warning size={17} /><div><b>{compose.error instanceof Error ? compose.error.message : "Triggerlane could not interpret that request."}</b><small>No draft was changed. Edit the request and generate again.</small></div></div>}
-    {!result && <button className="primary-action" onClick={() => compose.mutate()} disabled={compose.isPending || prompt.trim().length < 12}>{compose.isPending ? "GENERATING..." : "GENERATE TRIGGER"}<Sparkle size={17} weight="fill" /></button>}
-    {result && <div className="ai-review">
-      <div className="ai-review-head"><span className="eyebrow">STRUCTURED PROPOSAL</span><b>{result.draft.name}</b><small>{result.draft.side} · {result.draft.side === "SELL" ? `${result.draft.amount}% POSITION` : `${result.draft.amount} USDC`}</small></div>
-      <div className="ai-interpretation">{result.interpretation.map((item) => <div key={item}><Check size={13} />{item}</div>)}</div>
-      {result.blockingIssues.length > 0 && <div className="ai-warning" role="alert"><Warning size={16} /><div><b>Clarify before applying</b>{result.blockingIssues.map((issue) => <p key={issue}>{issue}</p>)}</div></div>}
-      {result.retained.length > 0 && <details><summary>Retained Composer values ({result.retained.length})</summary>{result.retained.map((item) => <p key={item}>{item}</p>)}</details>}
-      <div className="ai-insights"><span className="eyebrow">TRIGGER REVIEW</span>{result.insights.map((insight) => <article key={insight.title}><b>{insight.title}</b><p>{insight.message}</p><span>{insight.action}</span></article>)}</div>
-      <p className="ai-disclaimer">{result.disclaimer}</p>
-      <button className="primary-action" disabled={!result.canApply} onClick={() => onApply(result)}>APPLY TO COMPOSER<ArrowRight size={17} /></button>
-      <button className="replay-action" onClick={() => setResult(null)}>EDIT REQUEST</button>
-    </div>}
-  </div>;
-}
-
-function RemovedReplayPanel({ result, period, onPeriod, close, loading }: { result: ReplayResult; period: "24H" | "7D" | "30D"; onPeriod: (period: "24H" | "7D" | "30D") => void; close: () => void; loading: boolean }) {
-  const [index, setIndex] = useState(result.points.length - 1);
-  useEffect(() => setIndex(result.points.length - 1), [result]);
-  const point = result.points[index] ?? result.points[0]!;
-  const triggerIndexes = result.points.map((item, pointIndex) => item.triggered ? pointIndex : -1).filter((item) => item >= 0);
-  return <div className="replay-panel">
-    <div className="replay-header"><div><span className="eyebrow">DEMO REPLAY · SYNTHETIC FRAMES</span><h2>Replay trigger</h2><p>{providerLabel(result.provider.name)} · generated price, funding, and portfolio P&amp;L frames for product exploration</p></div><button className="icon-button" title="Close Replay" onClick={close}><X size={18} /></button></div>
-    <div className="replay-periods" role="group" aria-label="Replay period">{(["24H", "7D", "30D"] as const).map((value) => <button aria-pressed={period === value} className={period === value ? "active" : ""} key={value} onClick={() => onPeriod(value)} disabled={loading}>{value}</button>)}</div>
-    <div className="replay-summary"><div><span>WOULD TRIGGER</span><b>{result.summary.triggerCount}</b><small>crossings</small></div><div><span>FIRST TRIGGER</span><b>{result.summary.firstTriggerAt ? dateTime(result.summary.firstTriggerAt) : "Never"}</b></div><div><span>MEDIAN WATCH</span><b>{result.summary.medianWatchingHours}h</b></div><div><span>SIMULATED OUTCOME</span><b className={Number(result.summary.simulatedOutcomePercent) >= 0 ? "positive" : "negative"}>{Number(result.summary.simulatedOutcomePercent) >= 0 ? "+" : ""}{result.summary.simulatedOutcomePercent}%</b></div></div>
-    <div className="replay-stage">
-      <div className="replay-stage-head"><div><span className="eyebrow">FRAME {index + 1} / {result.points.length}</span><h3>{dateTime(point.at)}</h3></div><div className={point.triggered ? "replay-trigger active" : "replay-trigger"}>{point.triggered ? <><Lightning size={15} weight="fill" /> TRIGGER</> : `${point.readyCount}/${point.evaluations.length} READY`}</div></div>
-      <div className="replay-values"><div><span>SOL PRICE</span><b>{formatMetric("PRICE", point.values.PRICE)}</b></div><div><span>FUNDING</span><b>{formatMetric("FUNDING", point.values.FUNDING)}</b></div><div><span>POSITION P&amp;L</span><b>{formatMetric("PNL", point.values.PNL)}</b></div></div>
-      <div className="replay-track"><input aria-label="Replay timeline" type="range" min="0" max={result.points.length - 1} value={index} onChange={(event) => setIndex(Number(event.target.value))} /><div className="replay-markers">{triggerIndexes.map((triggerIndex) => <button aria-label={`Inspect trigger ${triggerIndexes.indexOf(triggerIndex) + 1}`} title={dateTime(result.points[triggerIndex]!.at)} style={{ left: `${(triggerIndex / Math.max(1, result.points.length - 1)) * 100}%` }} key={triggerIndex} onClick={() => setIndex(triggerIndex)}><Lightning size={10} weight="fill" /></button>)}</div></div>
-      <div className="replay-evaluations">{point.evaluations.map((evaluation) => <div className={evaluation.satisfied ? "ready" : ""} key={evaluation.metric}>{evaluation.satisfied ? <CheckCircle size={15} weight="fill" /> : <span /> }<b>{evaluation.metric}</b><small>{formatMetric(evaluation.metric, evaluation.current)} {evaluation.operator === "GTE" ? ">=" : "<="} {formatMetric(evaluation.metric, evaluation.target)}</small></div>)}</div>
-    </div>
-    <div className="replay-foot"><span>{result.summary.completeFrameCount}/{result.summary.frameCount} COMPLETE SYNTHETIC FRAMES · DEMO REPLAY</span><p>{result.disclaimer}</p></div>
-  </div>;
-}
-
-function strategyPattern(strategy: Strategy) {
-  if (strategy.category === "Accumulation") return { key: "accumulation", name: "Stress alignment", explanation: "Price weakness matters more when funding cools and your position confirms a real drawdown.", paths: ["M160 62 C300 62 320 165 475 165", "M160 165 H475", "M160 268 C300 268 320 165 475 165"] };
-  if (strategy.category === "Profit Taking") return { key: "profit", name: "Heat alignment", explanation: "A high price becomes more meaningful when market optimism and your position profit rise with it.", paths: ["M160 62 C270 62 335 110 475 165", "M160 165 C300 165 360 142 475 165", "M160 268 C285 268 355 210 475 165"] };
-  return { key: "protection", name: "Risk alignment", explanation: "The action waits for independent signs of weakness so one noisy move cannot decide alone.", paths: ["M160 62 L285 62 L390 165 H475", "M160 165 H475", "M160 268 L285 268 L390 165 H475"] };
-}
-
-function StrategyLattice({ strategy }: { strategy: Strategy }) {
-  const pattern = strategyPattern(strategy);
-  return <div className={`strategy-lattice strategy-pattern-${pattern.key}`} role="img" aria-label={`${strategy.name}, ${pattern.name}: ${strategy.draft.conditions.length} conditions converge on one ${strategy.draft.side.toLowerCase()} action`}>
-    <div className="strategy-pattern-label"><span>VISUAL PATTERN</span><b>{pattern.name}</b><small>{pattern.explanation}</small></div>
-    <svg className="strategy-lattice-desktop" viewBox="0 0 680 330" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><g className="lattice-paths">{pattern.paths.map((path) => <path d={path} key={path} />)}<path className="action-path" d="M475 165 H606" /></g>{strategy.draft.conditions.map((condition, index) => { const y = [62, 165, 268][index]!; return <g className="lattice-condition" transform={`translate(22 ${y - 31})`} key={condition.metric}><rect width="138" height="62" /><text x="13" y="22">{condition.metric === "PNL" ? "POSITION P&L" : condition.metric}</text><text className="lattice-value" x="13" y="45">{condition.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(condition.metric, condition.target)}</text></g>; })}<g className="lattice-core"><circle cx="475" cy="165" r="34" /><circle cx="475" cy="165" r="8" /><text x="475" y="220">ALL TRUE</text></g><g className={`lattice-action action-${strategy.draft.side.toLowerCase()}`} transform="translate(606 133)"><rect width="60" height="64" /><text x="30" y="27">{strategy.draft.side}</text><text x="30" y="45">SOL</text></g></svg>
-    <div className="strategy-lattice-mobile" aria-hidden="true">
-      <div className="mobile-lattice-heading"><span>{pattern.name.toUpperCase()}</span><b>{strategy.draft.conditions.length} SIGNALS WATCHING</b></div>
-      <div className="mobile-lattice-signals">{strategy.draft.conditions.map((condition, index) => <div className="mobile-lattice-signal" key={condition.metric}><i>{String(index + 1).padStart(2, "0")}</i><div><span>{condition.metric === "PNL" ? "POSITION P&L" : condition.metric}</span><b>{condition.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(condition.metric, condition.target)}</b></div><em /></div>)}</div>
-      <div className="mobile-lattice-core"><span>ALL {strategy.draft.conditions.length} SIGNALS</span><b>TRUE TOGETHER</b></div>
-      <div className={`mobile-lattice-action action-${strategy.draft.side.toLowerCase()}`}><small>THEN, ONCE</small><strong>{strategy.draft.side} SOL</strong></div>
-    </div>
-    <div className="lattice-caption"><span>ONE COMPLETE FRAME</span><b>{strategy.draft.conditions.length} CONDITIONS → 1 ACTION</b></div>
-  </div>;
-}
-
-function DiscoverBeginnerGuide() {
-  return <section className="discover-beginner" aria-labelledby="multi-signal-guide-title"><div className="beginner-question"><Question size={24} /><div><span>NEW TO CONDITIONAL TRIGGERS?</span><h2 id="multi-signal-guide-title">Why watch several signals?</h2></div></div><p>A price can look attractive for many reasons. Adding funding and position P&amp;L lets you describe the fuller market moment you actually care about.</p><ol><li><i>1</i><div><b>Observe independently</b><span>Each signal keeps its own target.</span></div></li><li><i>2</i><div><b>Agree in one frame</b><span>Every chosen signal must be true together.</span></div></li><li><i>3</i><div><b>Act only once</b><span>The reviewed action runs a single time.</span></div></li></ol></section>;
-}
-
-function DiscoverReplay({ result, strategy, onContinue, loading }: { result: ReplayResult; strategy: Strategy; onContinue: () => void; loading: boolean }) {
-  const prices = result.points.map((point) => Number(point.values.PRICE));
-  const minimum = Math.min(...prices);
-  const range = Math.max(1, Math.max(...prices) - minimum);
-  return <section className="discover-replay-result" aria-label="24 hour demo Replay result">
-    <header><div><span className="eyebrow">DEMO REPLAY RESULT · SYNTHETIC FRAMES</span><h3>{result.summary.triggerCount ? `${result.summary.triggerCount} qualifying crossing${result.summary.triggerCount === 1 ? "" : "s"}` : "No qualifying crossing"}</h3><p>This generated example explains how the signals behave. It does not predict what happens next.</p></div><span>DEMO REPLAY · NOT A FORECAST</span></header>
-    <div className="discover-replay-stats"><div><span>FRAMES CHECKED</span><b>{result.summary.completeFrameCount}</b></div><div><span>FIRST CROSSING</span><b>{result.summary.firstTriggerAt ? dateTime(result.summary.firstTriggerAt) : "Never"}</b></div><div><span>MEDIAN WATCH</span><b>{result.summary.medianWatchingHours}h</b></div></div>
-    <div className="discover-replay-track" aria-label={`${result.points.length} synthetic demo frames`}>{result.points.map((point, index) => <i className={point.triggered ? "triggered" : ""} style={{ height: `${24 + (Number(point.values.PRICE) - minimum) / range * 68}%` }} title={`${dateTime(point.at)} · ${point.readyCount}/${point.evaluations.length} ready`} key={point.frameId}><span>{point.triggered ? <Lightning size={9} weight="fill" /> : index + 1}</span></i>)}</div>
-    <div className="replay-next-step"><div><ShieldCheck size={18} /><span><b>Your Simulation did not change</b><small>{result.disclaimer} No trigger was created and no capital was reserved.</small></span></div><button onClick={onContinue} disabled={loading}>{loading ? "OPENING COMPOSER..." : `REVIEW ${strategy.name.toUpperCase()} IN COMPOSER`}<ArrowRight size={15} /></button></div>
-  </section>;
-}
-
-function DiscoverView({ workspace }: { workspace: Workspace }) {
-  const catalog = useQuery({ queryKey: ["strategies"], queryFn: () => api<StrategyCatalog>("/api/strategies") });
-  const [category, setCategory] = useState<StrategyCatalog["categories"][number]>("Popular");
-  const [metric, setMetric] = useState<"ALL" | Metric>("ALL");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [replayResult, setReplayResult] = useState<{ strategyId: string; result: ReplayResult } | null>(null);
-  const useStrategy = useMutation({ mutationFn: (id: string) => api<Strategy>(`/api/strategies/${id}/use`, { method: "POST" }), onSuccess: (strategy) => { window.location.href = `/trade?strategy=${strategy.id}`; } });
-  const replay = useMutation({ mutationFn: (strategy: Strategy) => api<ReplayResult>("/api/replay", { method: "POST", body: JSON.stringify({ period: "24H", draft: strategy.draft }) }), onSuccess: (result, strategy) => setReplayResult({ strategyId: strategy.id, result }) });
-  if (!catalog.data) return <LoadingView />;
-  const categoryStrategies = catalog.data.strategies.filter((strategy) => category === "Popular" ? strategy.featured : category === "Advanced" ? false : strategy.category === category);
-  const visible = categoryStrategies.filter((strategy) => metric === "ALL" || strategy.metrics.includes(metric));
-  const selected = visible.find((strategy) => strategy.id === selectedId) ?? visible[0] ?? null;
-  const chooseCategory = (next: StrategyCatalog["categories"][number]) => { setCategory(next); setMetric("ALL"); setSelectedId(null); setReplayResult(null); };
-  const chooseStrategy = (strategy: Strategy) => { setSelectedId(strategy.id); setReplayResult(null); document.getElementById("strategy-preview")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
-  const price = Number(workspace.frame.observations.PRICE.value);
-  const commitmentAmount = selected ? selected.draft.side === "BUY" ? Number(selected.draft.amount) : Number(workspace.portfolio.balances.SOL.quantity) * Number(selected.draft.amount) / 100 : 0;
-  const commitmentAsset = selected?.draft.side === "BUY" ? "USDC" : "SOL";
-  const commitmentValue = selected?.draft.side === "BUY" ? commitmentAmount : commitmentAmount * price;
-  return <main className="page-view discover-editorial">
-    <div className="page-title discover-title"><div><span className="eyebrow">STRATEGIES</span><h1>Choose a starting point</h1><p>Preview a strategy, then open it in Composer to make it yours.</p></div><div className="discover-market"><span>MARKET</span><b>SOL PERP / USDC</b><small>PRICE · FUNDING · POSITION P&amp;L</small></div></div>
-    <DiscoverBeginnerGuide />
-    <nav className="discover-navigation" aria-label="Strategy catalog navigation"><div className="strategy-tabs" role="tablist" aria-label="Strategy categories">{catalog.data.categories.map((item) => <button role="tab" aria-selected={category === item} className={category === item ? "active" : ""} key={item} onClick={() => chooseCategory(item)}>{item}</button>)}</div><div className="metric-filters" role="group" aria-label="Supported metric filter"><span>FILTER BY SIGNAL</span>{(["ALL", ...catalog.data.capabilities.metrics] as const).map((item) => <button aria-pressed={metric === item} className={metric === item ? "active" : ""} key={item} onClick={() => { setMetric(item); setSelectedId(null); setReplayResult(null); }}>{item === "ALL" ? "All three" : item === "PNL" ? "Position P&L" : item}</button>)}</div></nav>
-    {category === "Advanced" ? <section className="strategy-unavailable advanced-boundary"><SlidersHorizontal size={35} /><span className="eyebrow">OUTSIDE THE CURRENT CATALOG</span><h2>Advanced signals need qualified data first</h2><p>Liquidity, TVL, and volume are not available to the execution engine, so strategies that depend on them stay outside the selectable catalog.</p><div>{catalog.data.capabilities.unsupportedAdvancedMetrics.map((item) => <span key={item}>{item} · UNSUPPORTED</span>)}</div><button onClick={() => chooseCategory("Popular")}>RETURN TO CURATED STRATEGIES</button></section> : selected ? <>
-      <section id="strategy-preview" className="strategy-feature" aria-labelledby="strategy-preview-title"><div className="strategy-feature-copy"><div className="feature-index"><span>{String(catalog.data.strategies.indexOf(selected) + 1).padStart(2, "0")}</span><b>{selected.category.toUpperCase()}</b></div><span className="eyebrow">{selected.thesis}</span><h2 id="strategy-preview-title">{selected.name}</h2><p>{selected.description}</p><div className="strategy-nonpromise"><ShieldCheck size={17} /><span>This is a configurable monitoring idea, not a recommendation or promise of an outcome.</span></div><dl><div><dt>ACTION</dt><dd>{selected.draft.side} SOL</dd></div><div><dt>CAPITAL IF ARMED</dt><dd>{quantity.format(commitmentAmount)} {commitmentAsset}<small>${money.format(commitmentValue)} at the current frame</small></dd></div><div><dt>EXPIRES</dt><dd>{selected.draft.expiresInHours < 24 ? `${selected.draft.expiresInHours} hour` : `${selected.draft.expiresInHours / 24} days`}</dd></div><div><dt>MAX SLIPPAGE</dt><dd>{selected.draft.maxSlippageBps} bps</dd></div></dl><div className="feature-actions"><div><span>1 · EXPLORE SAFELY</span><button className="preview-replay" onClick={() => replay.mutate(selected)} disabled={replay.isPending}>{replay.isPending ? "CHECKING 24H..." : "REPLAY LAST 24H"}<Play size={15} weight="fill" /></button><small>Uses demo history. Changes nothing.</small></div><div><span>2 · MAKE IT YOURS</span><button className="load-strategy" onClick={() => useStrategy.mutate(selected.id)} disabled={useStrategy.isPending}>{useStrategy.isPending ? "LOADING..." : "LOAD INTO COMPOSER FOR REVIEW"}<ArrowRight size={15} /></button><small>Opens an editable, unsaved draft.</small></div></div><small className="review-boundary">Only you can save or start the trigger after reviewing it in Composer.</small></div><div className="strategy-feature-visual"><StrategyLattice strategy={selected} /><div className="condition-manifest"><span>ALL MUST BE TRUE IN ONE FRAME</span>{selected.draft.conditions.map((condition, index) => <div key={condition.metric}><i>{index + 1}</i><b>{condition.metric === "PNL" ? "POSITION P&L" : condition.metric}</b><small>{condition.operator === "GTE" ? "AT LEAST" : "AT MOST"} {formatMetric(condition.metric, condition.target)}</small></div>)}</div></div></section>
-      {replayResult?.strategyId === selected.id && <DiscoverReplay result={replayResult.result} strategy={selected} onContinue={() => useStrategy.mutate(selected.id)} loading={useStrategy.isPending} />}
-      <section className="curated-index" aria-labelledby="curated-index-title"><header><div><span className="eyebrow">CURATED INDEX</span><h2 id="curated-index-title">Compare the supported ideas</h2></div><p>{visible.length} {visible.length === 1 ? "strategy uses" : "strategies use"} only schema-valid Price, Funding, and Position P&amp;L conditions.</p></header><div>{visible.map((strategy, index) => <motion.article className={strategy.id === selected.id ? "selected" : ""} key={strategy.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * .04 }}><button className="strategy-index-main" onClick={() => chooseStrategy(strategy)} aria-label={`Preview ${strategy.name}`}><span>{String(catalog.data!.strategies.indexOf(strategy) + 1).padStart(2, "0")}</span><div><small>{strategy.category.toUpperCase()} · {strategy.thesis.toUpperCase()}</small><h3>{strategy.name}</h3><p>{strategy.description}</p></div><div><span>{strategy.draft.side}</span><b>{strategy.draft.side === "BUY" ? `${strategy.draft.amount} USDC` : `${strategy.draft.amount}% SOL`}</b><small>{strategy.draft.expiresInHours / 24}D EXPIRY</small></div><CaretRight size={19} /></button></motion.article>)}</div></section>
-    </> : <section className="strategy-unavailable"><Database size={35} /><h2>No strategy uses that supported signal</h2><p>Clear the signal filter to return to the complete curated catalog.</p><button onClick={() => setMetric("ALL")}>SHOW ALL STRATEGIES</button></section>}
-  </main>;
 }
 
 function IdeasView() {
