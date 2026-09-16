@@ -102,10 +102,16 @@ export function Bar({ ratio, met = false }: { ratio: number; met?: boolean }) {
   );
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
  * Secondary detail opens over the page. Escape and the close control dismiss
  * it, and focus moves in so a keyboard reaches the content rather than the page
  * behind it. Never used for placing, pausing or cancelling.
+ *
+ * Because it claims aria-modal, Tab has to stay inside it, and closing has to
+ * put focus back where it came from. Without that, dismissing sends a keyboard
+ * to the top of the document and the reader loses their place entirely.
  */
 export function Dialog({ title, aside, onClose, children, footer }: {
   title: string;
@@ -117,12 +123,39 @@ export function Dialog({ title, aside, onClose, children, footer }: {
   const panel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
     panel.current?.focus();
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !panel.current) return;
+      const stops = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => element.offsetParent !== null);
+      if (stops.length === 0) {
+        event.preventDefault();
+        panel.current.focus();
+        return;
+      }
+      const first = stops[0]!;
+      const last = stops[stops.length - 1]!;
+      const active = document.activeElement;
+      if (!event.shiftKey && (active === last || active === panel.current)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && (active === first || active === panel.current)) {
+        event.preventDefault();
+        last.focus();
+      }
     };
+
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      // Give the keyboard back to whatever opened this.
+      if (opener && document.contains(opener)) opener.focus();
+    };
   }, [onClose]);
 
   return (
