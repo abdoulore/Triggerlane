@@ -1,0 +1,144 @@
+/*
+ * The frame around every product screen. The header has to survive a 360px
+ * phone: the nav is the first thing to outgrow the width, and the shell clips
+ * rather than scrolls, so an unhandled overflow hides a whole destination.
+ */
+
+.header {
+  flex-shrink: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.brandMark {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius);
+  background: var(--accent-dark);
+  display: grid;
+  place-items: center;
+}
+
+.brandMark span {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.brandName {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Scrolls instead of clipping once the destinations stop fitting. */
+.nav {
+  display: flex;
+  gap: 22px;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav a[aria-current="page"] {
+  color: var(--text);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.paper {
+  padding: 3px 8px;
+  background: #15130d;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+.equityValue {
+  color: var(--text);
+}
+
+.body {
+  flex-grow: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.footer {
+  flex-shrink: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+
+@media (max-width: 720px) {
+  .equity {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .header {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .left {
+    gap: 14px;
+  }
+
+  .nav {
+    gap: 16px;
+  }
+
+  .brandName {
+    display: none;
+  }
+
+  .footer {
+    padding: 0 12px;
+  }
+}

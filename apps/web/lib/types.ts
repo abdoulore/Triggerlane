@@ -78,6 +78,40 @@ export interface Trigger {
   reservation?: Reservation | null;
 }
 
+export interface LedgerEntry {
+  id: string;
+  asset: "SOL" | "USDC";
+  amount: string;
+  costBasisDeltaUsdc: string | null;
+  unitPriceUsdc: string | null;
+  type: string;
+  createdAt: string;
+}
+
+/** One immutable balance movement. Its entries rebuild the balances above it. */
+export interface LedgerTransaction {
+  id: string;
+  type: string;
+  executionId: string | null;
+  ghostId: string | null;
+  ghostName: string | null;
+  createdAt: string;
+  entries: LedgerEntry[];
+}
+
+/** Capital a trigger holds. It cannot be promised elsewhere until released. */
+export interface CapitalReservation {
+  id: string;
+  ghostId: string;
+  ghostName: string;
+  side: Side;
+  asset: "SOL" | "USDC";
+  amount: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Workspace {
   identity: { id: string; label: string };
   portfolio: {
@@ -90,6 +124,8 @@ export interface Workspace {
   };
   frame: Frame;
   ghosts: Trigger[];
+  ledger: LedgerTransaction[];
+  reservations: CapitalReservation[];
 }
 
 export interface EngineStatus {

@@ -8,6 +8,7 @@ import { amount, dateTime, fundingApr, fundingHourly, metricLabel, percent, prov
 import type { Trigger, Workspace } from "@/lib/types";
 import { isTerminal } from "@/lib/types";
 import { useLiveEvents } from "@/lib/use-live-events";
+import { AppShell } from "@/components/app-shell";
 import { Bar, Dialog, Row, SecondaryButton, Stat, StatStrip, ui } from "@/components/ui";
 
 const CONDITION_COLUMNS = "1.2fr 1fr 1fr 1fr 1.8fr 1.6fr 0.8fr";
@@ -85,14 +86,18 @@ export function DetailScreen({ triggerId }: { triggerId: string }) {
     ? buildSandboxQuote({ side: trigger.side, reservedAmount: size, referencePrice: settleAt })
     : null;
 
+  const equity = workspace
+    ? Number(workspace.portfolio.balances.USDC.quantity) + Number(workspace.portfolio.balances.SOL.quantity) * price
+    : null;
+
   return (
-    <main style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <AppShell active="triggers" equity={equity}>
       <StatStrip height={60}>
         <span className={ui.muted} style={{ fontSize: 12 }}>Triggers /</span>
-        <span style={{ fontSize: 17, fontWeight: 600 }}>
+        <h1 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>
           <span className={trigger.side === "BUY" ? ui.up : ui.down}>{trigger.side === "BUY" ? "Buy" : "Sell"}</span>{" "}
           {trigger.amountType === "USDC" ? `${amount(trigger.amount)} USDC` : `${amount(trigger.amount)}% of SOL`}
-        </span>
+        </h1>
         <span className={ui.accent} style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", border: "1px solid var(--accent-dark)", borderRadius: "var(--radius)" }}>
           {trigger.status}
         </span>
@@ -185,6 +190,6 @@ export function DetailScreen({ triggerId }: { triggerId: string }) {
           )}
         </Dialog>
       )}
-    </main>
+    </AppShell>
   );
 }

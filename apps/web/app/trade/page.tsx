@@ -1,5 +1,5 @@
-import { GhostApp } from "@/components/ghost-app";
+import { TradeScreen } from "@/features/trade/trade-screen";
 
 export default function TradePage() {
-  return <GhostApp view="trade" />;
+  return <TradeScreen />;
 }

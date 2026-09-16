@@ -7,6 +7,7 @@ import { amount, conditionChip, percent, timeLeft, usd } from "@/lib/format";
 import type { Trigger, Workspace } from "@/lib/types";
 import { isTerminal } from "@/lib/types";
 import { useLiveEvents } from "@/lib/use-live-events";
+import { AppShell } from "@/components/app-shell";
 import { Chip, Row, Stat, StatStrip, ui } from "@/components/ui";
 
 const COLUMNS = "1.5fr 2.2fr 0.8fr 0.9fr 0.8fr 0.7fr 0.8fr 0.9fr";
@@ -65,10 +66,12 @@ export function TriggersScreen() {
     .filter((trigger) => trigger.status === "WATCHING")
     .sort((left, right) => Number(right.triggerProximity) - Number(left.triggerProximity))[0];
 
+  const equity = Number(workspace.portfolio.balances.USDC.quantity) + Number(workspace.portfolio.balances.SOL.quantity) * price;
+
   return (
-    <main style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <AppShell active="triggers" equity={equity}>
       <StatStrip height={56}>
-        <span style={{ fontSize: "var(--type-body)", fontWeight: 600 }}>Triggers</span>
+        <h1 style={{ fontSize: "var(--type-body)", fontWeight: 600, margin: 0 }}>Triggers</h1>
         <div style={{ display: "flex", gap: 18, fontSize: 13 }}>
           <button
             type="button"
@@ -170,6 +173,6 @@ export function TriggersScreen() {
           <span className={ui.mono}>frame {workspace.frame.id.slice(0, 8)} {workspace.frame.completeness}</span>
         </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

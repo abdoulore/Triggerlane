@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../apps/web/.next/static/", import.meta.url));
 const limits = {
-  totalStaticBytes: 2_500_000,
+  // Inflated while the rebuilt screens and the old interface both ship. The old
+  // component is still built for the routes that have not been ported, so its
+  // code counts here even where nothing renders it. Restore this to 2_500_000,
+  // and ideally lower, once ghost-app.tsx is deleted.
+  totalStaticBytes: 2_650_000,
   totalJavaScriptBytes: 2_200_000,
   largestJavaScriptBytes: 950_000,
 };

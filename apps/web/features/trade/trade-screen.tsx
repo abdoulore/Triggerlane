@@ -8,6 +8,7 @@ import { amount, conditionChip, fundingApr, fundingHourly, metricLabel, operator
 import type { Trigger, Workspace } from "@/lib/types";
 import { isTerminal } from "@/lib/types";
 import { useLiveEvents } from "@/lib/use-live-events";
+import { AppShell } from "@/components/app-shell";
 import { Card, Chip, PrimaryButton, Row, ScrollRail, SecondaryButton, Segmented, Stat, StatStrip, ui } from "@/components/ui";
 
 const TRIGGER_COLUMNS = "1.6fr 2.4fr 0.9fr 1fr 0.7fr 0.9fr";
@@ -122,19 +123,19 @@ export function TradeScreen() {
   const affordable = committed > 0 && committed <= Number(free);
   const previews = draft.conditions.map((condition) => evaluateCondition(condition, observations[condition.metric].value));
 
+  const equity = Number(workspace.portfolio.balances.USDC.quantity) + Number(workspace.portfolio.balances.SOL.quantity) * Number(price);
+
   return (
-    <main style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <AppShell active="trade" equity={equity}>
       <StatStrip height={64}>
         <div className={ui.stat}>
-          <span className={ui.statValue}>SOL-PERP</span>
+          <h1 className={ui.statValue} style={{ margin: 0 }}>SOL-PERP</h1>
           <span className={ui.statLabel}>{workspace.portfolio.dataMode === "LIVE" ? "Hyperliquid mark" : "Guided scenario"}</span>
         </div>
         <span className={`${ui.mono} ${ui.up}`} style={{ fontSize: 22, fontWeight: 600 }}>{usd(price)}</span>
         <Stat label="24h change" value={percent(market?.change.value, 2)} tone={Number(market?.change.value ?? 0) >= 0 ? "up" : "down"} />
         <Stat label="Funding" value={<>{fundingHourly(funding)} <span className={ui.muted}>{fundingApr(funding)}</span></>} />
         <Stat label="Feed" value={market?.status === "FRESH" ? "live" : market?.status?.toLowerCase() ?? "loading"} />
-        <div style={{ flexGrow: 1 }} />
-        <Stat label="Equity" value={usd(Number(workspace.portfolio.balances.USDC.quantity) + Number(workspace.portfolio.balances.SOL.quantity) * Number(price))} />
       </StatStrip>
 
       <div style={{ flexGrow: 1, display: "flex", minHeight: 0 }}>
@@ -288,6 +289,6 @@ export function TradeScreen() {
           <SecondaryButton onClick={() => dispatch({ type: "field", field: "name", value: draft.name })}>Save as draft</SecondaryButton>
         </ScrollRail>
       </div>
-    </main>
+    </AppShell>
   );
 }

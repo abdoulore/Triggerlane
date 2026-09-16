@@ -49,7 +49,7 @@ async function armedTrigger(page: Page) {
     });
     return trigger;
   }, draft);
-  await page.goto(`/trigger2/${created.id}`);
+  await page.goto(`/ghost/${created.id}`);
   await expect(page.getByText("Conditions", { exact: true })).toBeVisible();
   return created;
 }

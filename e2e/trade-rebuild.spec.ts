@@ -2,13 +2,12 @@ import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 /**
- * The rebuilt Trade screen, served at /trade2 while the current one keeps
- * running. These assertions cover the decisions the design settled on, so a
- * regression in any of them is caught before the routes are swapped.
+ * The rebuilt Trade screen, now serving /trade. These assertions cover the
+ * decisions the design settled on, so a regression in any of them is caught.
  */
 
 test("the rebuilt Trade screen renders the market, the open triggers and the order rail", async ({ page }) => {
-  await page.goto("/trade2");
+  await page.goto("/trade");
 
   await expect(page.getByText("SOL-PERP")).toBeVisible();
   await expect(page.getByRole("group", { name: "Order side" })).toBeVisible();
@@ -30,7 +29,7 @@ test("the rebuilt Trade screen renders the market, the open triggers and the ord
 });
 
 test("the order rail scrolls its middle while the action stays pinned", async ({ page }) => {
-  await page.goto("/trade2");
+  await page.goto("/trade");
   await expect(page.getByRole("button", { name: /Place buy trigger/ })).toBeVisible();
 
   // Three conditions is the most the domain allows, and the worst case for height.
@@ -52,7 +51,7 @@ test("the order rail scrolls its middle while the action stays pinned", async ({
 
 test("the rebuilt Trade screen passes the accessibility gate", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/trade2");
+  await page.goto("/trade");
   await expect(page.getByText("SOL-PERP")).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();

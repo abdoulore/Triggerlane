@@ -1,5 +1,5 @@
-import { GhostApp } from "@/components/ghost-app";
+import { PortfolioScreen } from "@/features/portfolio/portfolio-screen";
 
 export default function PortfolioPage() {
-  return <GhostApp view="portfolio" />;
+  return <PortfolioScreen />;
 }
