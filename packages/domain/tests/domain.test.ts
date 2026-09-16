@@ -108,11 +108,22 @@ describe("Ghost domain", () => {
     expect(fundingAprPercent("0")).toBe("0");
   });
 
-  it("keeps strategy funding targets inside a reachable annual range", () => {
+  // Bounds come from 500 hourly SOL funding points sampled from Hyperliquid over
+  // 2026-08-17 to 2026-09-07: median 10.95% APR, p95 13.74%, p99 43.26%, min -16.39%.
+  // A target below the median is true most of the time and carries no signal; one
+  // past the observed extreme can never fire. Both failures have shipped before.
+  it("keeps strategy funding targets selective but reachable", () => {
     for (const strategy of STRATEGY_TEMPLATES) {
       const funding = strategy.draft.conditions.find((condition) => condition.metric === "FUNDING");
       if (!funding) continue;
-      expect(Math.abs(Number(fundingAprPercent(funding.target)))).toBeLessThanOrEqual(60);
+      const apr = Number(fundingAprPercent(funding.target));
+      if (funding.operator === "GTE") {
+        expect(apr).toBeGreaterThanOrEqual(13);
+        expect(apr).toBeLessThanOrEqual(45);
+      } else {
+        expect(apr).toBeLessThanOrEqual(0);
+        expect(apr).toBeGreaterThanOrEqual(-16);
+      }
     }
   });
 
