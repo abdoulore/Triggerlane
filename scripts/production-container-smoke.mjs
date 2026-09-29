@@ -60,7 +60,10 @@ try {
   const created = await mutation("/api/ghosts", {
     name: "Container Persistence Receipt", side: "SELL", amount: "25", amountType: "POSITION_PERCENT",
     maxSlippageBps: 50, expiresInHours: 24,
-    conditions: [{ metric: "PRICE", operator: "GTE", target: "1" }],
+    // Arming a guided scenario advances it one step, to 258.40, and evaluates at
+    // once. The target has to stay false there and come true on the next step,
+    // 274.80, or the trigger fills on arming and never watches at all.
+    conditions: [{ metric: "PRICE", operator: "GTE", target: "270" }],
   });
   await mutation(`/api/ghosts/${created.body.id}/arm`);
   const before = await request("/api/workspace");
