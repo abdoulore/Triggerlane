@@ -39,7 +39,7 @@ const start = () => run("run", "-d", "--name", container, "-p", "34100:3000", "-
 const stop = () => run("rm", "-f", container);
 const ready = async () => {
   for (let attempt = 0; attempt < 90; attempt += 1) {
-    try { const result = await request("/health/ready"); if (result.body?.status === "ready") return; } catch {}
+    try { const result = await request("/health/ready"); if (result.body?.database === "ready") return; } catch {}
     await sleep(1_000);
   }
   run("logs", container);
