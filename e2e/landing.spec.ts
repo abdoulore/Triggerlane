@@ -36,7 +36,7 @@ test("the landing teaches the product through the real scene", async ({ page }) 
 
   const firstViewport = await page.evaluate(() => ({
     primaryBottom: document.querySelector(".landing-primary")!.getBoundingClientRect().bottom,
-    proofTop: document.querySelector(".capability-proof")!.getBoundingClientRect().top,
+    proofTop: document.querySelector(".hero-signal-console")!.getBoundingClientRect().top,
     viewport: window.innerHeight,
   }));
   expect(firstViewport.primaryBottom).toBeLessThan(firstViewport.viewport);
@@ -48,13 +48,14 @@ test("the landing teaches the product through the real scene", async ({ page }) 
   await page.getByRole("link", { name: "SEE HOW IT WORKS" }).click();
   await expect(page.getByRole("heading", { name: "Conditional trading in three human steps." })).toBeVisible();
 
-  // Switching steps must not resize the panel under the reader.
-  const panelHeight = () => page.locator(".guide-panel").evaluate((element) => element.getBoundingClientRect().height);
-  await page.getByRole("tab", { name: /Choose your moment/ }).click();
-  const before = await panelHeight();
-  await page.getByRole("tab", { name: /Get one clear result/ }).click();
-  await expect(page.getByText("FILLED ONCE, RECEIPT STORED")).toBeVisible();
-  expect(Math.abs((await panelHeight()) - before)).toBeLessThanOrEqual(2);
+  // All three steps are visible at once; a heading promising three of them
+  // followed by a panel showing one was the unclear part.
+  const steps = page.locator(".guide-steps article");
+  await expect(steps).toHaveCount(3);
+  await expect(steps.nth(0)).toContainText("Choose your moment");
+  await expect(steps.nth(1)).toContainText("Let Triggerlane wait");
+  await expect(steps.nth(2)).toContainText("Get one clear result");
+  await expect(page.getByText("FILLED ONCE, RECEIPT STORED")).toHaveCount(0);
 });
 
 test("the landing stays framed and non-blank on a phone", async ({ page }) => {
@@ -67,7 +68,7 @@ test("the landing stays framed and non-blank on a phone", async ({ page }) => {
     scrollWidth: document.documentElement.scrollWidth,
     innerWidth: window.innerWidth,
     primaryBottom: document.querySelector(".landing-primary")!.getBoundingClientRect().bottom,
-    proofTop: document.querySelector(".capability-proof")!.getBoundingClientRect().top,
+    proofTop: document.querySelector(".hero-signal-console")!.getBoundingClientRect().top,
     innerHeight: window.innerHeight,
   }));
   expect(measured.scrollWidth).toBeLessThanOrEqual(measured.innerWidth);
