@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowRight, Check, Eye, Path, Play, Receipt, ShieldCheck, Target, Timer } from "@phosphor-icons/react";
+import { ArrowRight, Eye, Path, Play, Receipt, ShieldCheck } from "@phosphor-icons/react";
 import { STRATEGY_TEMPLATES } from "@ghost/domain";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { SIGNALS, SignalEngineScene, signalValue, type SignalId } from "../signal-engine/signal-engine";
@@ -26,8 +26,6 @@ export function LandingExperience() {
   const [focused, setFocused] = useState<SignalId | null>(null);
   const [running, setRunning] = useState(false);
   const reducedMotion = Boolean(useReducedMotion());
-  const guideIndex = stage >= 4 ? 2 : stage >= 2 ? 1 : 0;
-  const guide = GUIDE[guideIndex]!;
   const readyCount = Math.min(stage, 3);
   const status = useMemo(() => stage >= 4 ? "FILLED ONCE" : stage >= 3 ? "READY TO ACT" : `${readyCount} OF 3 READY`, [readyCount, stage]);
 
@@ -39,7 +37,6 @@ export function LandingExperience() {
   }, [reducedMotion, running, stage]);
 
   const run = () => { setStage(0); setFocused(null); setRunning(true); };
-  const showGuide = (index: number) => { setRunning(false); setStage(GUIDE[index]!.stage); };
 
   return <main className={`landing-page phase-24 stage-${stage}`}>
     <header className="landing-nav">
@@ -65,24 +62,11 @@ export function LandingExperience() {
       </motion.div>
     </section>
 
-    <section className="capability-proof" aria-label="What Triggerlane can do">
-      {[<><Target size={20} /><span><b>ONE OR MANY SIGNALS</b><small>Use only the rules you need.</small></span></>, <><ShieldCheck size={20} /><span><b>VIRTUAL CAPITAL FIRST</b><small>Commitment is visible before starting.</small></span></>, <><Timer size={20} /><span><b>ONE-SHOT EXECUTION</b><small>A qualifying trigger fires once.</small></span></>, <><Receipt size={20} /><span><b>STORED EVIDENCE</b><small>Every outcome keeps its frame and receipt.</small></span></>].map((item, index) => <motion.div key={index} initial={reducedMotion ? false : { opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: .7 }} transition={{ duration: reducedMotion ? 0 : .38, delay: reducedMotion ? 0 : index * .06 }}>{item}</motion.div>)}
-    </section>
 
     <section id="beginner-guide" className="landing-section beginner-section" aria-labelledby="beginner-title">
       <Reveal className="section-heading"><span className="landing-kicker">START HERE</span><h2 id="beginner-title">Conditional trading in three human steps.</h2><p>You describe the moment. Triggerlane does the waiting. The simulation shows exactly what happened.</p></Reveal>
-      <Reveal className="beginner-walkthrough" delay={.08}>
-        <div className="guide-tabs" role="tablist" aria-label="How Triggerlane works">
-          {GUIDE.map((item, index) => <button key={item.title} role="tab" aria-selected={guideIndex === index} aria-controls="guide-panel" id={`guide-tab-${index}`} onClick={() => showGuide(index)}>{guideIndex === index && <motion.div className="guide-active-indicator" layoutId="guide-active-indicator" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}<i>{index + 1}</i><span><b>{item.title}</b><small>{item.status}</small></span><ArrowRight size={17} /></button>)}
-        </div>
-        <div id="guide-panel" className="guide-panel" role="tabpanel" aria-labelledby={`guide-tab-${guideIndex}`}>
-          <AnimatePresence mode="wait" initial={false}><motion.div className="guide-copy" key={guideIndex} initial={reducedMotion ? { opacity: 1 } : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -8 }} transition={{ duration: reducedMotion ? 0 : .22 }}><span className="guide-status"><i />{guide.status}</span><h3>{guide.title}</h3><p>{guide.body}</p></motion.div></AnimatePresence>
-          <div className="guide-frame" aria-label={`${readyCount} of 3 demonstration signals ready`}>
-            {SIGNALS.map((signal, index) => <div key={signal.id} className={stage >= index + 1 ? "ready" : ""}><i>{stage >= index + 1 ? <Check size={13} weight="bold" /> : index + 1}</i><span><b>{signal.label}</b><small>{signal.target}</small></span><strong>{signalValue(signal, index, stage)}</strong></div>)}
-            <div className={`guide-result ${stage >= 4 ? "fired" : ""}`}><span>ONE ACTION</span><b>SELL 25% SOL</b><small>{stage >= 4 ? "FILLED ONCE, RECEIPT STORED" : "WAITING FOR YOUR RULES"}</small></div>
-          </div>
-          <button className="guide-play" onClick={run} disabled={running}><Play size={15} weight="fill" />{running ? "WATCHING THE MOMENT" : stage >= 4 ? "PLAY AGAIN" : "PLAY THE FULL EXAMPLE"}</button>
-        </div>
+      <Reveal className="guide-steps" delay={.08}>
+        {GUIDE.map((item, index) => <article key={item.title}><i>{index + 1}</i><span>{item.status}</span><h3>{item.title}</h3><p>{item.body}</p></article>)}
       </Reveal>
     </section>
 

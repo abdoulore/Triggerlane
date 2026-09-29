@@ -1,0 +1,55 @@
+# Triggerlane on a single host. One app container beside Caddy, which
+# terminates TLS. The app is never published directly: the session cookie is
+# set `secure`, so it only survives behind HTTPS.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_ENV: production-sandbox
+      SESSION_SECRET: ${SESSION_SECRET:?generate with: openssl rand -hex 32}
+      OPERATIONS_TOKEN: ${OPERATIONS_TOKEN:?generate a second, different value}
+      PGLITE_DATA_DIR: /data/triggerlane
+      API_HOST: 127.0.0.1
+      API_PORT: "8787"
+      # Loopback inside the container. The browser only ever talks to Next,
+      # which rewrites /api and /health through to the API on this address.
+      API_INTERNAL_URL: http://127.0.0.1:8787
+      # Exactly one proxy (Caddy) sits in front. At 0 the API sees Caddy's IP
+      # for every request and all visitors share one rate-limit bucket.
+      TRUST_PROXY_HOPS: "1"
+      WEB_ORIGIN: ${WEB_ORIGIN:?the public https origin, e.g. https://triggerlane.example.com}
+      # The committed default of 60 is a solo-demo ceiling. Anyone sharing an
+      # office or conference network will exhaust it between them.
+      RATE_LIMIT_ANONYMOUS_SESSIONS_PER_HOUR: ${RATE_LIMIT_ANONYMOUS_SESSIONS_PER_HOUR:-600}
+    volumes:
+      - triggerlane-data:/data
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 150s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  # Paper accounts, triggers, receipts and the ledger live here. Losing this
+  # volume loses every account; nothing else in the container is durable.
+  triggerlane-data:
+  caddy-data:
+  caddy-config:

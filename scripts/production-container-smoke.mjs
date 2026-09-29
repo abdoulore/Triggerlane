@@ -39,7 +39,7 @@ const start = () => run("run", "-d", "--name", container, "-p", "34100:3000", "-
 const stop = () => run("rm", "-f", container);
 const ready = async () => {
   for (let attempt = 0; attempt < 90; attempt += 1) {
-    try { const result = await request("/health/ready"); if (result.body?.status === "ready") return; } catch {}
+    try { const result = await request("/health/ready"); if (result.body?.database === "ready") return; } catch {}
     await sleep(1_000);
   }
   run("logs", container);
@@ -60,7 +60,10 @@ try {
   const created = await mutation("/api/ghosts", {
     name: "Container Persistence Receipt", side: "SELL", amount: "25", amountType: "POSITION_PERCENT",
     maxSlippageBps: 50, expiresInHours: 24,
-    conditions: [{ metric: "PRICE", operator: "GTE", target: "1" }],
+    // Arming a guided scenario advances it one step, to 258.40, and evaluates at
+    // once. The target has to stay false there and come true on the next step,
+    // 274.80, or the trigger fills on arming and never watches at all.
+    conditions: [{ metric: "PRICE", operator: "GTE", target: "270" }],
   });
   await mutation(`/api/ghosts/${created.body.id}/arm`);
   const before = await request("/api/workspace");

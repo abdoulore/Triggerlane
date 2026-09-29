@@ -1,0 +1,218 @@
+import type { GhostDraft, Metric } from "@ghost/domain";
+
+/** Shapes returned by the API. Kept here so features import types, not each other. */
+
+export type Side = "BUY" | "SELL";
+export type Operator = "GTE" | "LTE";
+export type Provenance = "DEMO" | "LIVE";
+
+export interface Balance {
+  asset: "SOL" | "USDC";
+  quantity: string;
+  reserved: string;
+  available: string;
+  costBasisUsdc: string | null;
+}
+
+export interface Observation {
+  id: string;
+  metric: Metric;
+  value: string;
+  provider: string;
+  sourceTimestamp: string | null;
+  receivedAt: string;
+  provenance: Provenance;
+}
+
+export interface Frame {
+  id: string;
+  mode: Provenance;
+  completeness: "COMPLETE" | "INCOMPLETE" | "STALE";
+  executionEligible: boolean;
+  assembledAt: string;
+  observations: Record<Metric, Observation>;
+}
+
+export interface Evaluation {
+  metric: Metric;
+  operator: Operator;
+  target: string;
+  current: string;
+  satisfied: boolean;
+  distanceRatio: string;
+  evidence?: {
+    frameId: string;
+    observationId: string;
+    provider: string;
+    sourceTimestamp: string | null;
+    receivedAt: string;
+    provenance: Provenance;
+  };
+}
+
+export interface Reservation {
+  id: string;
+  asset: string;
+  amount: string;
+  status: string;
+}
+
+export interface Trigger {
+  id: string;
+  name: string;
+  side: Side;
+  amount: string;
+  amountType: "USDC" | "POSITION_PERCENT";
+  maxSlippageBps: number;
+  expiresAt: string;
+  conditions: GhostDraft["conditions"];
+  evaluations: Evaluation[];
+  configurationVersion: number;
+  status: string;
+  pauseReason: string | null;
+  triggerProximity: string;
+  createdAt: string;
+  armedAt: string | null;
+  executedAt: string | null;
+  updatedAt: string;
+  reservation?: Reservation | null;
+}
+
+export interface LedgerEntry {
+  id: string;
+  asset: "SOL" | "USDC";
+  amount: string;
+  costBasisDeltaUsdc: string | null;
+  unitPriceUsdc: string | null;
+  type: string;
+  createdAt: string;
+}
+
+/** One immutable balance movement. Its entries rebuild the balances above it. */
+export interface LedgerTransaction {
+  id: string;
+  type: string;
+  executionId: string | null;
+  ghostId: string | null;
+  ghostName: string | null;
+  createdAt: string;
+  entries: LedgerEntry[];
+}
+
+/** Capital a trigger holds. It cannot be promised elsewhere until released. */
+export interface CapitalReservation {
+  id: string;
+  ghostId: string;
+  ghostName: string;
+  side: Side;
+  asset: "SOL" | "USDC";
+  amount: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A settled trade. These fields come straight off the executions row, so they
+ * stay snake_case, unlike the reservation and attempt shapes the API maps.
+ */
+export interface Execution {
+  id: string;
+  ghost_id: string;
+  ghost_name: string;
+  status: string;
+  input_asset: string;
+  input_amount: string;
+  output_asset: string;
+  output_amount: string;
+  execution_price: string;
+  modeled_slippage_bps: number;
+  completed_at: string;
+  receipt: Record<string, unknown>;
+  portfolioGeneration?: number;
+}
+
+/** A trade that reached settlement and was stopped there, with the reason. */
+export interface ExecutionAttempt {
+  id: string;
+  ghostId: string;
+  ghostName: string;
+  configurationVersion: number;
+  status: "BLOCKED";
+  side: Side;
+  amount: string;
+  amountType: "USDC" | "POSITION_PERCENT";
+  maxSlippageBps: number;
+  conditions: GhostDraft["conditions"];
+  createdAt: string;
+  updatedAt: string;
+  reason: {
+    message: string;
+    metadata: { quote?: { modelVersion?: string; referencePrice?: string; executionPrice?: string; modeledSlippageBps?: number } };
+    createdAt: string;
+  } | null;
+  reservation: Reservation | null;
+  frame: Frame;
+}
+
+export interface Workspace {
+  identity: { id: string; label: string };
+  portfolio: {
+    id: string;
+    generation: number;
+    dataMode: Provenance;
+    demoStep: number;
+    version: number;
+    balances: { SOL: Balance; USDC: Balance };
+  };
+  frame: Frame;
+  ghosts: Trigger[];
+  executions: Execution[];
+  archivedExecutions?: Execution[];
+  executionAttempts: ExecutionAttempt[];
+  ledger: LedgerTransaction[];
+  reservations: CapitalReservation[];
+}
+
+/** A starting point from the catalog. Its draft is a trigger, not a trigger. */
+export interface Strategy {
+  id: string;
+  name: string;
+  category: "Accumulation" | "Profit Taking" | "Protection";
+  description: string;
+  thesis: string;
+  featured: boolean;
+  metrics: Metric[];
+  draft: GhostDraft;
+  /** Where the price target sits relative to the market: -8 is 8% below. */
+  priceOffsetPct?: number | null;
+  /** The price the target was resolved against, when one was known. */
+  resolvedAgainstPrice?: string | null;
+}
+
+export interface StrategyCatalog {
+  title: string;
+  categories: string[];
+  capabilities: { market: string; metrics: Metric[]; unsupportedAdvancedMetrics: string[] };
+  strategies: Strategy[];
+}
+
+export interface EngineStatus {
+  status: "OPERATIONAL" | "DEGRADED";
+  workerActive: boolean;
+  outboxPending: number;
+}
+
+export interface RuntimeCapabilities {
+  environment: "development" | "preview" | "production-sandbox" | "production-rialo";
+  executionMode: "SANDBOX" | "RIALO";
+  features: { aiComposer: boolean; replay: boolean; multiStage: boolean; rialo: boolean; demoFeed: boolean; advancedConditions: boolean };
+}
+
+/** The live trigger states, in the order a trader scans them. */
+export const ACTIVE_STATUSES = ["WATCHING", "PAUSED", "DRAFT"] as const;
+export const TERMINAL_STATUSES = ["FILLED", "CANCELLED", "EXPIRED", "FAILED"] as const;
+
+export function isTerminal(status: string): boolean {
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}

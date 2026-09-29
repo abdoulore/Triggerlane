@@ -17,6 +17,7 @@ coverage/
 docs/archive/
 docs/POST_MVP_VISUAL_ROADMAP.md
 docs/LAUNCH_AUDIT.md
+docs/FIX_PLAN.md
 
 # Environment files (keep the committed template)
 .env

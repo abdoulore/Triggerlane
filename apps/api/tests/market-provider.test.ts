@@ -56,6 +56,20 @@ describe("Hyperliquid market provider", () => {
     expect(vi.mocked(request)).toHaveBeenCalledTimes(2);
   });
 
+  it("identifies a snapshot by its values so an unchanged market is not treated as new data", async () => {
+    const request = providerFetch();
+    let clock = 1_700_000_600_000;
+    // Two genuine fetches, far enough apart to defeat the cache, same market.
+    const provider = new HyperliquidMarketProvider(request, () => clock, 0);
+    const first = await provider.view("5m");
+    clock += 60_000;
+    const later = await provider.view("5m");
+
+    expect(vi.mocked(request).mock.calls.length).toBeGreaterThan(2);
+    expect(later.receivedAt).not.toBe(first.receivedAt);
+    expect(later.snapshotId).toBe(first.snapshotId);
+  });
+
   it("never substitutes Demo data when the first Live request fails", async () => {
     const request = vi.fn(async () => { throw new Error("provider offline"); }) as unknown as typeof fetch;
     const view = await new HyperliquidMarketProvider(request, () => 1_700_000_600_000).view("1m");

@@ -4,9 +4,20 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../apps/web/.next/static/", import.meta.url));
 const limits = {
-  totalStaticBytes: 2_500_000,
-  totalJavaScriptBytes: 2_200_000,
-  largestJavaScriptBytes: 950_000,
+  // Measured with the price chart wired in: 2,171,588 static, 1,963,219 of it
+  // JavaScript, 718,489 in the largest chunk. These sit about 6% above that.
+  //
+  // The previous ceiling was set before the chart shipped and broke as soon as
+  // it did, which was avoidable: the chart was known to be owed at the time.
+  //
+  // Worth knowing when reading a failure here: totalStaticBytes sums every file
+  // on disk, including chunks a route only fetches later, so splitting a
+  // dependency out does not reduce it. largestJavaScriptBytes is the one that
+  // tracks how heavy a single entry has become; it did not move when the
+  // charting library arrived, which is how we know it landed in its own chunk.
+  totalStaticBytes: 2_300_000,
+  totalJavaScriptBytes: 2_080_000,
+  largestJavaScriptBytes: 780_000,
 };
 
 async function files(path) {

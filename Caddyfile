@@ -1,0 +1,11 @@
+# Set DOMAIN in .env. Caddy obtains and renews the certificate itself.
+{$DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy app:3000 {
+		# Triggerlane pushes live trigger updates over server-sent events on
+		# /api/events. Buffering that stream makes the interface look frozen
+		# until a manual refresh, so responses are flushed immediately.
+		flush_interval -1
+	}
+}

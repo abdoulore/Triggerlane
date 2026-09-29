@@ -8,11 +8,15 @@ import {
   evaluateCondition,
   evaluateGhost,
   evaluateReplay,
+  fundingAprPercent,
   ghostDraftSchema,
   ghostIntelligence,
   modeledSlippageBps,
   isObservationNewer,
   parseGhostPrompt,
+  resolveStrategyDraft,
+  resolveStrategyPriceTarget,
+  roundToHalfDollar,
   STRATEGY_TEMPLATES,
   valuePortfolio,
   type AdapterCapabilityMatrix,
@@ -98,6 +102,92 @@ describe("Ghost domain", () => {
       expect(strategy.metrics.every((metric) => ["PRICE", "FUNDING", "PNL"].includes(metric))).toBe(true);
     }
     expect(STRATEGY_TEMPLATES.some((strategy) => strategy.draft.conditions.length === 1)).toBe(true);
+  });
+
+  // A dollar target written against one market is wrong in the next. These were
+  // authored near $250 and, at $98, two of them read as already true and two as
+  // unreachable, so every idea in the catalogue was broken at once.
+  it("resolves strategy price targets against whatever the market costs now", () => {
+    const buyTheFear = STRATEGY_TEMPLATES.find((strategy) => strategy.id === "buy-the-fear")!;
+    const euphoriaExit = STRATEGY_TEMPLATES.find((strategy) => strategy.id === "euphoria-exit")!;
+
+    // Eight percent below and twelve percent above, at three different markets.
+    expect(resolveStrategyPriceTarget(buyTheFear, "250")).toBe("230.00");
+    expect(resolveStrategyPriceTarget(buyTheFear, "98.35")).toBe("90.50");
+    expect(resolveStrategyPriceTarget(euphoriaExit, "250")).toBe("280.00");
+    expect(resolveStrategyPriceTarget(euphoriaExit, "98.35")).toBe("110.00");
+
+    // A buy idea always sits below the market and a sell idea above it, at any
+    // price. That is the property that makes the catalogue usable at all.
+    for (const price of ["12.5", "98.35", "250", "1840.75"]) {
+      for (const strategy of STRATEGY_TEMPLATES) {
+        const target = resolveStrategyPriceTarget(strategy, price);
+        if (target == null) continue;
+        const condition = strategy.draft.conditions.find((item) => item.metric === "PRICE")!;
+        if (condition.operator === "LTE") expect(Number(target)).toBeLessThan(Number(price));
+        else expect(Number(target)).toBeGreaterThan(Number(price));
+      }
+    }
+  });
+
+  it("falls back to the stored target when no price is known", () => {
+    const template = STRATEGY_TEMPLATES[0]!;
+    expect(resolveStrategyDraft(template, null)).toEqual(template.draft);
+    expect(resolveStrategyDraft(template, undefined)).toEqual(template.draft);
+    expect(resolveStrategyDraft(template, "0")).toEqual(template.draft);
+  });
+
+  it("resolves a draft that is still valid and leaves the other signals alone", () => {
+    const template = STRATEGY_TEMPLATES.find((strategy) => strategy.id === "euphoria-exit")!;
+    const resolved = resolveStrategyDraft(template, "98.35");
+
+    expect(ghostDraftSchema.safeParse(resolved).success).toBe(true);
+    expect(resolved.conditions.find((condition) => condition.metric === "PRICE")!.target).toBe("110.00");
+    // Funding and P&L are relative already, so resolution must not touch them.
+    for (const metric of ["FUNDING", "PNL"] as const) {
+      expect(resolved.conditions.find((condition) => condition.metric === metric))
+        .toEqual(template.draft.conditions.find((condition) => condition.metric === metric));
+    }
+  });
+
+  it("rounds prices to the half dollar traders actually type", () => {
+    expect(roundToHalfDollar("90.49")).toBe("90.50");
+    expect(roundToHalfDollar("90.24")).toBe("90.00");
+    expect(roundToHalfDollar("90.25")).toBe("90.50");
+    expect(roundToHalfDollar("100")).toBe("100.00");
+  });
+
+  it("gives every shipped idea an offset, so none of them can age", () => {
+    for (const strategy of STRATEGY_TEMPLATES) {
+      expect(strategy.priceOffsetPct, `${strategy.id} has no price offset`).toBeTypeOf("number");
+      expect(Math.abs(strategy.priceOffsetPct!)).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it("converts hourly funding into the annual rate traders compare", () => {
+    expect(fundingAprPercent("0.00001")).toBe("8.8");
+    expect(fundingAprPercent("0.0005")).toBe("438");
+    expect(fundingAprPercent("-0.000005")).toBe("-4.4");
+    expect(fundingAprPercent("0")).toBe("0");
+  });
+
+  // Bounds come from 500 hourly SOL funding points sampled from Hyperliquid over
+  // 2026-08-17 to 2026-09-07: median 10.95% APR, p95 13.74%, p99 43.26%, min -16.39%.
+  // A target below the median is true most of the time and carries no signal; one
+  // past the observed extreme can never fire. Both failures have shipped before.
+  it("keeps strategy funding targets selective but reachable", () => {
+    for (const strategy of STRATEGY_TEMPLATES) {
+      const funding = strategy.draft.conditions.find((condition) => condition.metric === "FUNDING");
+      if (!funding) continue;
+      const apr = Number(fundingAprPercent(funding.target));
+      if (funding.operator === "GTE") {
+        expect(apr).toBeGreaterThanOrEqual(13);
+        expect(apr).toBeLessThanOrEqual(45);
+      } else {
+        expect(apr).toBeLessThanOrEqual(0);
+        expect(apr).toBeGreaterThanOrEqual(-16);
+      }
+    }
   });
 
   it("parses a supported natural-language Ghost into strict domain units", () => {

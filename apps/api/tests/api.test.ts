@@ -29,6 +29,11 @@ describe("Ghost API", () => {
   const mutationHeaders = (sessionCookie = cookie) => ({ cookie: sessionCookie, "idempotency-key": randomUUID() });
 
   beforeAll(async () => {
+    // Replay and the deterministic composer are off by default now that the UI
+    // offers neither; these tests still cover their contracts for anyone who
+    // turns them back on.
+    process.env.ENABLE_REPLAY = "true";
+    process.env.ENABLE_AI_COMPOSER = "true";
     database = await createDatabase(":memory:");
     app = await buildServer(database);
     const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
@@ -222,6 +227,17 @@ describe("Ghost API", () => {
     expect(attempt.reason.metadata.quote.modelVersion).toBe("sandbox-v1");
   });
 
+  it("reports engine status to the product UI without operations credentials", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/engine-status", headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(["OPERATIONAL", "DEGRADED"]).toContain(body.status);
+    expect(typeof body.workerActive).toBe("boolean");
+    expect(typeof body.outboxPending).toBe("number");
+    const anonymous = await app.inject({ method: "GET", url: "/api/engine-status" });
+    expect(anonymous.statusCode).toBe(401);
+  });
+
   it("replays an arm request idempotently", async () => {
     const created = await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie }, payload: sellDraft("Retry guard") });
     const ghostId = created.json().id;
@@ -302,6 +318,159 @@ describe("Ghost API", () => {
     );
     expect(persisted.rows[0]).toMatchObject({ delivery_count: 1 });
     expect(persisted.rows[0]?.published_at).not.toBeNull();
+  });
+
+  it("creates a trigger on a live account that has no stored frame yet", async () => {
+    // The worker only stores frames for portfolios that already hold a trigger,
+    // so the first trigger on a live account is created before any frame exists.
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "LIVE" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: liveCookie },
+      payload: { name: "First live trigger", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 60, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "GTE", target: "9999" }] },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().evaluations).toHaveLength(1);
+
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+    expect(armed.statusCode).toBe(200);
+    expect(armed.json().status).toBe("WATCHING");
+
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/cancel`, headers: mutationHeaders(liveCookie) });
+  });
+
+  it("stores one frame while the market is unchanged, and another when it moves", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const liveCookie = Array.isArray(header) ? header[0]! : header;
+    await app.inject({ method: "POST", url: "/api/data-mode", headers: { cookie: liveCookie }, payload: { mode: "LIVE" } });
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: liveCookie } })).json();
+    // Unreachable target, so the trigger keeps watching across every tick.
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: { cookie: liveCookie },
+      payload: { name: "Dedupe watcher", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "1" }] },
+    });
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/arm`, headers: mutationHeaders(liveCookie) });
+
+    const viewAt = (price: string, receivedAt: string): MarketView => ({
+      mode: "LIVE",
+      instrument: { symbol: "SOL-PERP", displayName: "SOL perpetual", quoteAsset: "USDC", priceType: "MARK_PRICE" },
+      provider: "Hyperliquid",
+      // Content-addressed, exactly as the provider now builds it.
+      snapshotId: `hl:${price}:0.00003`,
+      price: { value: price, unit: "USDC_PER_SOL" },
+      funding: { value: "0.00003", unit: "RATIO", period: "1H" },
+      sourceTimestamp: null,
+      receivedAt,
+      status: "FRESH",
+      executionEligible: true,
+      eligibilityReason: "Fresh Live frame.",
+      change: { value: null, label: null },
+      history: { status: "AVAILABLE", interval: "1m", points: [], reason: null },
+    });
+
+    let view = viewAt("250", new Date().toISOString());
+    const worker = new GhostService(database, {}, { view: async () => view });
+    const count = async () => {
+      const stored = await database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM evaluation_frames WHERE portfolio_id=$1 AND mode='LIVE'", [workspace.portfolio.id]);
+      return Number(stored.rows[0]?.count ?? 0);
+    };
+
+    // Arming a live trigger can already have stored a frame, so measure the
+    // change across ticks rather than an absolute total.
+    const before = await count();
+    await worker.processLivePaperTick();
+    const afterFirst = await count();
+    expect(afterFirst).toBeGreaterThan(before);
+
+    // Same market, later receipt times: nothing new to record.
+    for (let tick = 0; tick < 3; tick += 1) {
+      view = viewAt("250", new Date(Date.now() + (tick + 1) * 5_000).toISOString());
+      await worker.processLivePaperTick();
+    }
+    expect(await count()).toBe(afterFirst);
+
+    // The price moves, so the frame is genuinely new.
+    view = viewAt("251.25", new Date(Date.now() + 20_000).toISOString());
+    await worker.processLivePaperTick();
+    expect(await count()).toBe(afterFirst + 1);
+
+    // Leave no watching trigger behind. The worker now targets every live
+    // portfolio that has one, for the whole run, so a permanently watching
+    // trigger would join later tests' ticks and inflate their counts.
+    await app.inject({ method: "POST", url: `/api/ghosts/${created.json().id}/cancel`, headers: mutationHeaders(liveCookie) });
+  });
+
+  it("prunes stale frames and observations without touching stored evidence", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const portfolioId = workspace.portfolio.id;
+    const old = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+    const frame = async (id: string, assembledAt: string) => {
+      await database.query(
+        `INSERT INTO evaluation_frames (id, portfolio_id, market, cutoff_at, assembled_at, mode, completeness, execution_eligible, observations)
+         VALUES ($1, $2, 'SOL/USDC', $3, $3, 'LIVE', 'COMPLETE', TRUE, $4)`,
+        [id, portfolioId, assembledAt, JSON.stringify(workspace.frame.observations)],
+      );
+    };
+    await frame("prune-orphan", old);
+    await frame("prune-evidence", old);
+    await frame("prune-newest", new Date().toISOString());
+
+    // An execution referencing a frame makes it evidence, whatever its age.
+    const ghost = (await app.inject({ method: "POST", url: "/api/ghosts", headers: { cookie: isolatedCookie }, payload: sellDraft("Evidence holder") })).json();
+    const reservationId = randomUUID();
+    await database.query(
+      "INSERT INTO capital_reservations (id, portfolio_id, ghost_id, asset, amount_decimal, status, version, created_at, updated_at) VALUES ($1,$2,$3,'SOL',1,'CONSUMED',1,NOW(),NOW())",
+      [reservationId, portfolioId, ghost.id],
+    );
+    const attemptId = randomUUID();
+    await database.query(
+      "INSERT INTO execution_attempts (id, ghost_id, configuration_version, trigger_frame_id, idempotency_key, status, created_at, updated_at) VALUES ($1,$2,1,'prune-evidence',$3,'FILLED',NOW(),NOW())",
+      [attemptId, ghost.id, `prune:${attemptId}`],
+    );
+    await database.query(
+      `INSERT INTO executions (id, ghost_id, portfolio_id, attempt_id, status, input_asset, input_amount, output_asset, output_amount, trigger_price, execution_price, modeled_slippage_bps, quote_model_version, idempotency_key, trigger_frame_id, settlement_frame_id, reservation_id, receipt, started_at, completed_at)
+       VALUES ($1,$2,$3,$4,'FILLED','SOL',1,'USDC',200,200,200,14,'sandbox-v1',$5,'prune-evidence','prune-evidence',$6,'{}',NOW(),NOW())`,
+      [randomUUID(), ghost.id, portfolioId, attemptId, `prune-exec:${attemptId}`, reservationId],
+    );
+
+    const observation = async (id: string, provenance: "LIVE" | "DEMO") => {
+      await database.query(
+        `INSERT INTO market_observations (id, portfolio_id, metric, value_decimal, unit, provider, provider_sequence, provenance, source_timestamp, received_at, portfolio_version)
+         VALUES ($1, $2, 'PRICE', 100, 'USDC_PER_SOL', 'fixture', NULL, $3, $4, $4, NULL)`,
+        [id, portfolioId, provenance, old],
+      );
+    };
+    await observation("prune-live-observation", "LIVE");
+    await observation("prune-demo-observation", "DEMO");
+    await database.query(
+      "INSERT INTO outbox_events (id, user_id, event_type, payload, created_at, published_at) VALUES ($1,$2,'ghost.status.updated','{}',$3,$3)",
+      ["prune-published-event", workspace.identity.id, old],
+    );
+
+    const pruned = await new GhostService(database).pruneExpiredData();
+    expect(pruned.frames).toBeGreaterThanOrEqual(1);
+
+    const survives = async (table: string, id: string) => {
+      const found = await database.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM ${table} WHERE id = $1`, [id]);
+      return Number(found.rows[0]?.count ?? 0) === 1;
+    };
+    expect(await survives("evaluation_frames", "prune-orphan")).toBe(false);
+    expect(await survives("evaluation_frames", "prune-evidence")).toBe(true);
+    expect(await survives("evaluation_frames", "prune-newest")).toBe(true);
+    expect(await survives("market_observations", "prune-live-observation")).toBe(false);
+    expect(await survives("market_observations", "prune-demo-observation")).toBe(true);
+    expect(await survives("outbox_events", "prune-published-event")).toBe(false);
   });
 
   it("allows only one worker lease owner and supports takeover after expiry", async () => {
@@ -630,6 +799,59 @@ describe("Ghost API", () => {
     expect(invalid.statusCode).toBe(422);
   });
 
+  it("retires a template that no longer ships, and aims the rest at the market", async () => {
+    // A template removed from the source used to live on in the catalogue for
+    // ever, because the upsert only ever set is_active TRUE. A row nothing
+    // recognises is exactly what a stale seeded price target looks like.
+    await database.query(
+      `INSERT INTO strategy_templates (id, name, category, description, thesis, featured, metrics, draft, is_active, sort_order, updated_at)
+       VALUES ('retired-idea', 'Retired Idea', 'Accumulation', 'No longer shipped.', 'Gone', FALSE, $1, $2, TRUE, 99, NOW())
+       ON CONFLICT (id) DO UPDATE SET is_active = TRUE`,
+      [JSON.stringify(["PRICE"]), JSON.stringify({ name: "Retired Idea", side: "BUY", amount: "100", amountType: "USDC", maxSlippageBps: 50, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "GTE", target: "255" }] })],
+    );
+
+    const response = await app.inject({ method: "GET", url: "/api/strategies", headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.strategies.map((strategy: { id: string }) => strategy.id)).not.toContain("retired-idea");
+
+    const stillThere = await database.query<{ is_active: boolean }>("SELECT is_active FROM strategy_templates WHERE id = 'retired-idea'");
+    expect(stillThere.rows[0]?.is_active, "the row is deactivated, not deleted").toBe(false);
+
+    // Every shipped idea carries its offset and a target resolved against a
+    // real price, on the reachable side of its own operator.
+    const retireSession = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const retireHeader = retireSession.headers["set-cookie"]!;
+    const retireCookie = Array.isArray(retireHeader) ? retireHeader[0]! : retireHeader;
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: retireCookie } })).json();
+    const price = Number(workspace.frame.observations.PRICE.value);
+    expect(price).toBeGreaterThan(0);
+    for (const strategy of body.strategies) {
+      expect(typeof strategy.priceOffsetPct, `${strategy.id} offset`).toBe("number");
+      const condition = strategy.draft.conditions.find((item: { metric: string }) => item.metric === "PRICE");
+      if (!condition) continue;
+      if (condition.operator === "LTE") expect(Number(condition.target)).toBeLessThan(price);
+      else expect(Number(condition.target)).toBeGreaterThan(price);
+    }
+  });
+
+  it("hands over a draft aimed at the current market", async () => {
+    // Its own session: the shared one carries a "used exactly once" assertion,
+    // and a second usage recorded against it fails that test instead of this.
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+
+    const workspace = (await app.inject({ method: "GET", url: "/api/workspace", headers: { cookie: isolatedCookie } })).json();
+    const price = Number(workspace.frame.observations.PRICE.value);
+    const used = await app.inject({ method: "POST", url: "/api/strategies/euphoria-exit/use", headers: mutationHeaders(isolatedCookie) });
+    expect(used.statusCode).toBe(200);
+    const target = Number(used.json().draft.conditions.find((item: { metric: string }) => item.metric === "PRICE").target);
+    // Twelve percent above whatever SOL costs, not a number from another market.
+    expect(target).toBeGreaterThan(price);
+    expect(target).toBeCloseTo(price * 1.12, 0);
+  });
+
   it("discovers persisted schema-valid strategies and records usage", async () => {
     const response = await app.inject({ method: "GET", url: "/api/strategies", headers: { cookie } });
     expect(response.statusCode).toBe(200);
@@ -890,5 +1112,80 @@ describe("Ghost API", () => {
     expect(overQuota.statusCode).toBe(429);
     expect(overQuota.json().error.code).toBe("TRIGGER_QUOTA_REACHED");
     await limitedApp.close();
+  });
+
+  /*
+   * Arm, pause, resume, cancel and reset act on the route's id alone and take no
+   * body. A client that still announces `content-type: application/json` on
+   * those calls used to reach the default JSON parser, which throws on an empty
+   * payload, and the error handler turned that into a 500. The rest of this
+   * suite never caught it because `app.inject` sends no content-type unless a
+   * payload is given, so these tests send the header the way a browser does.
+   */
+  const bodylessHeaders = (sessionCookie = cookie) => ({
+    ...mutationHeaders(sessionCookie),
+    "content-type": "application/json",
+  });
+
+  it("runs the whole lifecycle when a bodyless call declares a JSON content-type", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    // A target the mark never reaches, so nothing settles underneath the test.
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: mutationHeaders(isolatedCookie),
+      payload: { ...sellDraft("Bodyless lifecycle"), conditions: [{ metric: "PRICE", operator: "LTE", target: "0.01" }] },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+
+    const armed = await app.inject({ method: "POST", url: `/api/ghosts/${id}/arm`, headers: bodylessHeaders(isolatedCookie) });
+    expect(armed.statusCode, armed.body).toBe(200);
+    const paused = await app.inject({ method: "POST", url: `/api/ghosts/${id}/pause`, headers: bodylessHeaders(isolatedCookie) });
+    expect(paused.statusCode, paused.body).toBe(200);
+    const resumed = await app.inject({ method: "POST", url: `/api/ghosts/${id}/resume`, headers: bodylessHeaders(isolatedCookie) });
+    expect(resumed.statusCode, resumed.body).toBe(200);
+    const cancelled = await app.inject({ method: "POST", url: `/api/ghosts/${id}/cancel`, headers: bodylessHeaders(isolatedCookie) });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+    expect(cancelled.json().status).toBe("CANCELLED");
+  });
+
+  it("cancels a never-armed draft declaring a JSON content-type", async () => {
+    const session = await app.inject({ method: "POST", url: "/api/session/anonymous", payload: { initialMode: "DEMO" } });
+    const header = session.headers["set-cookie"]!;
+    const isolatedCookie = Array.isArray(header) ? header[0]! : header;
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: mutationHeaders(isolatedCookie),
+      payload: { ...sellDraft("Bodyless draft cancel"), conditions: [{ metric: "PRICE", operator: "LTE", target: "0.01" }] },
+    });
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/api/ghosts/${created.json().id}/cancel`,
+      headers: bodylessHeaders(isolatedCookie),
+    });
+    expect(cancelled.statusCode, cancelled.body).toBe(200);
+  });
+
+  it("keeps a malformed body a client error and still validates a well-formed one", async () => {
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: bodylessHeaders(),
+      payload: "{not json",
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json().error.code).toBe("VALIDATION_ERROR");
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/ghosts",
+      headers: bodylessHeaders(),
+      payload: { side: "SELL" },
+    });
+    expect(invalid.statusCode).toBe(422);
   });
 });

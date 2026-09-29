@@ -324,11 +324,55 @@ export interface StrategyTemplate {
   featured: boolean;
   metrics: Metric[];
   draft: GhostDraft;
+  /**
+   * Where this idea's price target sits relative to the market, as a percent:
+   * -8 is eight percent below, +12 is twelve percent above. The target inside
+   * `draft` is a fallback for when no price is known, and is otherwise
+   * replaced by `resolveStrategyDraft`. A fixed dollar target written against
+   * one market becomes nonsense in another: every one of these was authored
+   * near $250 and read as either already-true or unreachable at $98.
+   */
+  priceOffsetPct?: number;
+}
+
+/** Traders read and set SOL prices in half dollars, so targets land there. */
+export function roundToHalfDollar(value: Decimal.Value): string {
+  return new Decimal(value).mul(2).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).div(2).toFixed(2);
+}
+
+/**
+ * The concrete price an idea is watching for, given what the market costs now.
+ * Returns null when the idea has no offset or there is no price to work from,
+ * so callers can fall back to the target stored on the draft rather than
+ * inventing one.
+ */
+export function resolveStrategyPriceTarget(template: StrategyTemplate, price: Decimal.Value | null | undefined): string | null {
+  if (template.priceOffsetPct == null || price == null) return null;
+  const resolved = new Decimal(price).mul(100 + template.priceOffsetPct).div(100);
+  if (!resolved.isFinite() || resolved.lte(0)) return null;
+  return roundToHalfDollar(resolved);
+}
+
+/**
+ * The idea as a draft a trader could place right now. Only the price target
+ * moves: funding and P&L are already expressed relative to the position, not
+ * to a dollar figure that ages.
+ */
+export function resolveStrategyDraft(template: StrategyTemplate, price: Decimal.Value | null | undefined): GhostDraft {
+  const target = resolveStrategyPriceTarget(template, price);
+  if (target == null) return template.draft;
+  return {
+    ...template.draft,
+    conditions: template.draft.conditions.map((condition) =>
+      condition.metric === "PRICE" ? { ...condition, target } : condition,
+    ),
+  };
 }
 
 export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
   {
     id: "buy-the-fear",
+    priceOffsetPct: -8,
     name: "Buy the Fear",
     category: "Accumulation",
     description: "Accumulate a deep SOL correction only while funding and portfolio conditions confirm stress.",
@@ -339,26 +383,29 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
   },
   {
     id: "euphoria-exit",
+    priceOffsetPct: 12,
     name: "Euphoria Exit",
     category: "Profit Taking",
     description: "Scale out when SOL price, position profit, and perpetual funding indicate an overheated market.",
     thesis: "Overheating exit",
     featured: true,
     metrics: ["PRICE", "PNL", "FUNDING"],
-    draft: { name: "Euphoria Exit", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 50, expiresInHours: 168, conditions: [{ metric: "PRICE", operator: "GTE", target: "280" }, { metric: "FUNDING", operator: "GTE", target: "0.0005" }, { metric: "PNL", operator: "GTE", target: "0.1" }] },
+    draft: { name: "Euphoria Exit", side: "SELL", amount: "25", amountType: "POSITION_PERCENT", maxSlippageBps: 50, expiresInHours: 168, conditions: [{ metric: "PRICE", operator: "GTE", target: "280" }, { metric: "FUNDING", operator: "GTE", target: "0.00002" }, { metric: "PNL", operator: "GTE", target: "0.1" }] },
   },
   {
     id: "downside-break",
+    priceOffsetPct: -8,
     name: "Downside Break",
     category: "Protection",
     description: "Reduce SOL exposure when price, funding, and portfolio performance weaken together.",
     thesis: "Loss containment",
     featured: true,
     metrics: ["PRICE", "FUNDING", "PNL"],
-    draft: { name: "Downside Break", side: "SELL", amount: "50", amountType: "POSITION_PERCENT", maxSlippageBps: 75, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "230" }, { metric: "FUNDING", operator: "LTE", target: "-0.0002" }, { metric: "PNL", operator: "LTE", target: "-0.08" }] },
+    draft: { name: "Downside Break", side: "SELL", amount: "50", amountType: "POSITION_PERCENT", maxSlippageBps: 75, expiresInHours: 24, conditions: [{ metric: "PRICE", operator: "LTE", target: "230" }, { metric: "FUNDING", operator: "LTE", target: "-0.000005" }, { metric: "PNL", operator: "LTE", target: "-0.08" }] },
   },
   {
     id: "price-breakout",
+    priceOffsetPct: 2,
     name: "Price Breakout",
     category: "Accumulation",
     description: "Buy once when SOL reaches a price you choose. A clear one-signal starting point you can expand later.",
@@ -625,6 +672,13 @@ export function buildSandboxQuote(args: {
 
 export function isTerminal(status: GhostStatus): boolean {
   return ["FILLED", "CANCELLED", "EXPIRED", "FAILED"].includes(status);
+}
+
+/** Hyperliquid reports funding per hour; traders compare funding as an annual rate. */
+export const FUNDING_HOURS_PER_YEAR = 8760;
+
+export function fundingAprPercent(hourlyRatio: Decimal.Value): string {
+  return new Decimal(hourlyRatio).mul(FUNDING_HOURS_PER_YEAR).mul(100).toDecimalPlaces(1).toFixed();
 }
 
 export function formatMetric(metric: Metric, value: Decimal.Value): string {

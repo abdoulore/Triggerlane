@@ -21,7 +21,7 @@ import {
   type Metric,
   type MetricObservation,
   type MarketView,
-} from "@ghost/domain";
+  resolveStrategyDraft,} from "@ghost/domain";
 import { one, rows, type Queryable } from "./db.js";
 import { HyperliquidMarketProvider, type LiveHistoryInterval } from "./integrations/hyperliquid-market-provider.js";
 import { SandboxAutomationAdapter } from "./integrations/sandbox/sandbox-automation-adapter.js";
@@ -157,6 +157,10 @@ function publicGhost(row: GhostRow) {
 
 export class GhostService {
   private readonly executionAdapters = [new SandboxAutomationAdapter(), new RialoAutomationAdapter()];
+  // Retention runs on the same tick as everything else, so it is throttled
+  // rather than run every second.
+  private lastPruneAt = 0;
+  private readonly pruneIntervalMs = 10 * 60 * 1000;
 
   constructor(
     private readonly database: PGlite,
@@ -234,7 +238,13 @@ export class GhostService {
       [hashToken(token)],
     );
     if (!session) return null;
-    await this.database.query("UPDATE sessions SET last_seen_at = NOW() WHERE token_hash = $1", [hashToken(token)]);
+    // Every authenticated request resolves its session, so writing the seen time
+    // each time turns every read into a write. A minute of granularity is all
+    // any caller needs.
+    await this.database.query(
+      "UPDATE sessions SET last_seen_at = NOW() WHERE token_hash = $1 AND last_seen_at < NOW() - INTERVAL '60 seconds'",
+      [hashToken(token)],
+    );
     return { userId: session.user_id, expiresAt: new Date(session.expires_at).toISOString() };
   }
 
@@ -559,23 +569,60 @@ export class GhostService {
        FROM portfolios p
        WHERE p.status = 'ACTIVE'
          AND p.data_mode = 'LIVE'
-         AND (
-           EXISTS (
-             SELECT 1 FROM ghosts g
-             WHERE g.portfolio_id = p.id
-               AND (g.status = 'WATCHING' OR (g.status = 'PAUSED' AND g.pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')))
-           )
-           OR EXISTS (
-             SELECT 1 FROM sessions s
-             WHERE s.user_id = p.user_id
-               AND s.expires_at > NOW()
-               AND s.last_seen_at > NOW() - INTERVAL '30 seconds'
-           )
+         AND EXISTS (
+           SELECT 1 FROM ghosts g
+           WHERE g.portfolio_id = p.id
+             AND (g.status = 'WATCHING' OR (g.status = 'PAUSED' AND g.pause_reason IN ('DATA_STALE', 'FRAME_INCOMPLETE')))
          )
        ORDER BY p.id
        LIMIT $1`,
       [batchSize],
     );
+  }
+
+  /**
+   * A display-only frame for a Live portfolio with no active triggers, built
+   * from the provider's cached view rather than stored. Returns null when the
+   * view is not fresh or when the stored frame is already newer, so the caller
+   * keeps whatever it had. Never execution eligible: settlement only ever runs
+   * against frames the worker stored.
+   */
+  private async liveViewFrame(portfolio: PortfolioRow, stored: EvaluationFrame | null): Promise<EvaluationFrame | null> {
+    let view: MarketView;
+    try {
+      view = await this.marketProvider.view("1m");
+    } catch {
+      return null;
+    }
+    if (view.status !== "FRESH" || !view.snapshotId || !view.receivedAt || view.price.value == null || view.funding.value == null) return null;
+    if (stored && new Date(stored.assembledAt).getTime() >= new Date(view.receivedAt).getTime()) return null;
+
+    const sol = await this.balance(this.database, portfolio.id, "SOL");
+    const id = `view:${createHash("sha256").update(`${portfolio.id}:${view.snapshotId}`).digest("hex")}`;
+    const shared = { provider: view.provider, sourceTimestamp: view.sourceTimestamp, receivedAt: view.receivedAt, provenance: "LIVE" as const };
+    return {
+      id,
+      market: "SOL/USDC",
+      cutoffAt: view.receivedAt,
+      assembledAt: view.receivedAt,
+      mode: "LIVE",
+      completeness: "COMPLETE",
+      executionEligible: false,
+      observations: {
+        PRICE: { id: `${id}:price`, metric: "PRICE", value: view.price.value, unit: "USDC_PER_SOL", ...shared },
+        FUNDING: { id: `${id}:funding`, metric: "FUNDING", value: view.funding.value, unit: "RATIO", ...shared },
+        PNL: {
+          id: `${id}:pnl`,
+          metric: "PNL",
+          value: calculatePnlRatio(sol.quantity_decimal, sol.cost_basis_usdc_decimal ?? "0", view.price.value),
+          unit: "RATIO",
+          ...shared,
+          provider: "triggerlane-virtual-ledger",
+          portfolioVersion: portfolio.version,
+          derivedFromObservationIds: [`${id}:price`],
+        },
+      },
+    };
   }
 
   private async pauseLivePortfolio(portfolio: PortfolioRow, reason: string): Promise<number> {
@@ -673,7 +720,63 @@ export class GhostService {
     const live = await this.processLivePaperTick();
     for (const userId of live.userIds) publish(userId, { type: "market.frame.updated", mode: "LIVE", at: now() });
     const published = await this.publishOutbox(publish);
+    await this.pruneExpiredData();
     return { leaseAcquired: true, expired, liveFrames: live.frames, paused: live.paused, published };
+  }
+
+  /**
+   * Frames and observations accumulate every tick and nothing else removes them,
+   * so a long-lived deployment fills its volume. Anything an execution or an
+   * attempt refers to is evidence and is never removed, nor is the newest frame
+   * of each portfolio, which the workspace still reads.
+   */
+  async pruneExpiredData(limit = 500): Promise<{ frames: number; observations: number; outbox: number }> {
+    const now = Date.now();
+    if (now - this.lastPruneAt < this.pruneIntervalMs) return { frames: 0, observations: 0, outbox: 0 };
+    this.lastPruneAt = now;
+    const batchSize = Math.max(1, Math.min(Math.trunc(limit), 2_000));
+    const hours = Number(process.env.FRAME_RETENTION_HOURS ?? 24);
+    const cutoff = new Date(now - Math.max(1, hours) * 60 * 60 * 1000).toISOString();
+
+    const frames = await this.database.query(
+      `DELETE FROM evaluation_frames f
+       WHERE f.id = ANY(
+         SELECT c.id FROM evaluation_frames c
+         WHERE c.assembled_at < $1
+           AND NOT EXISTS (SELECT 1 FROM execution_attempts ea WHERE ea.trigger_frame_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.trigger_frame_id = c.id OR e.settlement_frame_id = c.id)
+           AND c.id <> (
+             SELECT latest.id FROM evaluation_frames latest
+             WHERE latest.portfolio_id = c.portfolio_id
+             ORDER BY latest.assembled_at DESC, latest.id DESC LIMIT 1
+           )
+         ORDER BY c.assembled_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    const observations = await this.database.query(
+      `DELETE FROM market_observations o
+       WHERE o.id = ANY(
+         SELECT c.id FROM market_observations c
+         WHERE c.received_at < $1 AND c.provenance = 'LIVE'
+         ORDER BY c.received_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    const outbox = await this.database.query(
+      `DELETE FROM outbox_events o
+       WHERE o.id = ANY(
+         SELECT c.id FROM outbox_events c
+         WHERE c.published_at IS NOT NULL AND c.published_at < $1
+         ORDER BY c.published_at LIMIT $2
+       )`,
+      [cutoff, batchSize],
+    );
+    return {
+      frames: frames.affectedRows ?? 0,
+      observations: observations.affectedRows ?? 0,
+      outbox: outbox.affectedRows ?? 0,
+    };
   }
 
   async expireDueGhosts(limit = 100): Promise<number> {
@@ -891,6 +994,14 @@ export class GhostService {
   async workspace(userId: string) {
     const portfolio = await this.activePortfolio(this.database, userId);
     let frame = await this.latestFrame(this.database, portfolio.id);
+    // The worker only stores frames for portfolios with active triggers, so a
+    // Live account that is merely being looked at has no fresh stored frame.
+    // Serve an unstored one from the provider cache instead of writing a row
+    // per viewer per tick; it is display-only and never drives settlement.
+    if (portfolio.data_mode === "LIVE") {
+      const viewFrame = await this.liveViewFrame(portfolio, frame);
+      if (viewFrame) frame = viewFrame;
+    }
     frame ??= await this.createDemoFrame(this.database, portfolio, portfolio.demo_step);
 
     const balanceRows = await rows<BalanceRow>(
@@ -931,7 +1042,7 @@ export class GhostService {
     );
     const attemptRows = await rows<Record<string, unknown>>(
       this.database,
-      `SELECT ea.id, ea.ghost_id, ea.configuration_version, ea.trigger_frame_id, ea.status, ea.created_at, ea.updated_at,
+      `SELECT ea.id, ea.ghost_id, ea.configuration_version, ea.trigger_frame_id, ea.status, ea.created_at, ea.updated_at, ea.blocked_reason,
         g.name AS ghost_name, g.side, g.amount_decimal::text, g.amount_type, g.max_slippage_bps, g.conditions,
         r.id AS reservation_id, r.asset AS reservation_asset, r.amount_decimal::text AS reservation_amount, r.status AS reservation_status,
         f.cutoff_at AS frame_cutoff_at, f.assembled_at AS frame_assembled_at, f.mode AS frame_mode,
@@ -1028,7 +1139,14 @@ export class GhostService {
         completed_at: new Date(execution.completed_at as string).toISOString(),
       })),
       executionAttempts: attemptRows.map((attempt) => {
-        const reason = blockedActivityRows.find((activity) => activity.ghost_id === attempt.ghost_id && Math.abs(new Date(activity.created_at as string).getTime() - new Date(attempt.updated_at as string).getTime()) < 5000);
+        // Prefer the reason stored on the attempt itself. Matching an activity
+        // row by a five-second window around the update time could attach the
+        // wrong reason when a trigger blocked more than once. The fallback
+        // covers attempts blocked before the column existed.
+        const stored = attempt.blocked_reason ? parseJson(attempt.blocked_reason as JsonValue) as { message?: string; quote?: unknown; blockedAt?: string } : null;
+        const reason = stored
+          ? { message: stored.message, metadata: { quote: stored.quote }, created_at: stored.blockedAt ?? attempt.updated_at }
+          : blockedActivityRows.find((activity) => activity.ghost_id === attempt.ghost_id && Math.abs(new Date(activity.created_at as string).getTime() - new Date(attempt.updated_at as string).getTime()) < 5000);
         return {
           id: attempt.id,
           ghostId: attempt.ghost_id,
@@ -1440,7 +1558,26 @@ export class GhostService {
     };
   }
 
-  async strategies() {
+  /**
+   * What SOL costs right now, for targets that have to track the market rather
+   * than a number written months ago. A live portfolio takes the provider's
+   * cached view; anything else, or a provider with nothing fresh, falls back to
+   * the newest stored frame, and then to the target on the template itself.
+   */
+  private async currentPrice(portfolio: PortfolioRow): Promise<string | null> {
+    if (portfolio.data_mode === "LIVE") {
+      try {
+        const view = await this.marketProvider.view("1m");
+        if (view.price.value != null) return view.price.value;
+      } catch {
+        // A stored frame is better than no price at all.
+      }
+    }
+    const frame = await this.latestFrame(this.database, portfolio.id);
+    return frame?.observations.PRICE.value ?? null;
+  }
+
+  async strategies(userId: string) {
     await this.database.transaction(async (tx) => {
       for (const [index, strategy] of STRATEGY_TEMPLATES.entries()) {
         await tx.query(
@@ -1450,7 +1587,16 @@ export class GhostService {
           [strategy.id, strategy.name, strategy.category, strategy.description, strategy.thesis, strategy.featured, JSON.stringify(strategy.metrics), JSON.stringify(strategy.draft), index],
         );
       }
+      // A template deleted from the source used to linger in the catalogue for
+      // ever, because nothing ever marked it inactive. Only is_active moves
+      // here; sort_order is what keeps the published order stable.
+      await tx.query(
+        "UPDATE strategy_templates SET is_active = FALSE, updated_at = NOW() WHERE is_active = TRUE AND NOT (id = ANY($1::text[]))",
+        [STRATEGY_TEMPLATES.map((strategy) => strategy.id)],
+      );
     });
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const price = await this.currentPrice(portfolio);
     const templates = await rows<Record<string, unknown>>(
       this.database,
       "SELECT id, name, category, description, thesis, featured, metrics, draft FROM strategy_templates WHERE is_active = TRUE ORDER BY sort_order",
@@ -1459,15 +1605,28 @@ export class GhostService {
       title: "Triggerlane Strategies",
       categories: ["Popular", "Accumulation", "Profit Taking", "Protection", "Advanced"],
       capabilities: { market: "SOL/USDC", metrics: ["PRICE", "FUNDING", "PNL"], unsupportedAdvancedMetrics: ["LIQUIDITY", "TVL", "VOLUME"] },
-      strategies: templates.map((template) => ({ ...template, metrics: parseJson(template.metrics as JsonValue), draft: parseJson(template.draft as JsonValue) })),
+      strategies: templates.map((template) => {
+        const source = STRATEGY_TEMPLATES.find((item) => item.id === template.id);
+        const draft = parseJson(template.draft as JsonValue) as GhostDraft;
+        return {
+          ...template,
+          metrics: parseJson(template.metrics as JsonValue),
+          draft: source ? resolveStrategyDraft({ ...source, draft }, price) : draft,
+          priceOffsetPct: source?.priceOffsetPct ?? null,
+          resolvedAgainstPrice: source?.priceOffsetPct == null ? null : price,
+        };
+      }),
     };
   }
 
   async useStrategy(userId: string, strategyId: string) {
     const strategy = STRATEGY_TEMPLATES.find((item) => item.id === strategyId);
     if (!strategy) throw new AppError("STRATEGY_NOT_FOUND", "Strategy was not found.", 404);
+    const portfolio = await this.activePortfolio(this.database, userId);
+    const price = await this.currentPrice(portfolio);
     await this.addActivity(this.database, userId, null, "STRATEGY_USED", `${strategy.name} loaded into Composer.`, { strategyId });
-    return strategy;
+    // Hand over a draft aimed at the market the trader is actually looking at.
+    return { ...strategy, draft: resolveStrategyDraft(strategy, price) };
   }
 
   private async evaluateWatchingGhosts(db: Queryable, userId: string, portfolio: PortfolioRow, frame: EvaluationFrame): Promise<void> {
@@ -1577,7 +1736,8 @@ export class GhostService {
     const price = frame.observations.PRICE.value;
     const quote = buildSandboxQuote({ side: ghost.side, reservedAmount: reservation.amount_decimal, referencePrice: price });
     if (quote.modeledSlippageBps > ghost.max_slippage_bps) {
-      await db.query("UPDATE execution_attempts SET status = 'BLOCKED', updated_at = NOW() WHERE id = $1", [attemptId]);
+      const blockedReason = { message: `Modeled slippage ${quote.modeledSlippageBps} bps exceeded the configured limit.`, quote, blockedAt: now() };
+      await db.query("UPDATE execution_attempts SET status = 'BLOCKED', blocked_reason = $2, updated_at = NOW() WHERE id = $1", [attemptId, JSON.stringify(blockedReason)]);
       await db.query("UPDATE capital_reservations SET status = 'ACTIVE', version = version + 1, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='LOCKED'", [reservation.id, portfolio.id]);
       await db.query("UPDATE ghosts SET status = 'WATCHING', was_qualified = TRUE, updated_at = NOW() WHERE id = $1 AND portfolio_id=$2 AND status='TRIGGERED'", [ghost.id, portfolio.id]);
       await this.addActivity(db, userId, ghost.id, "EXECUTION_BLOCKED", `Modeled slippage ${quote.modeledSlippageBps} bps exceeded the configured limit.`, { quote });
@@ -1716,6 +1876,15 @@ export class GhostService {
       executionId,
       ledgerTransactionId,
     });
+  }
+
+  async engineStatus(): Promise<{ status: "OPERATIONAL" | "DEGRADED"; workerActive: boolean; outboxPending: number }> {
+    const [lease, outbox] = await Promise.all([
+      one<{ expires_at: string }>(this.database, "SELECT expires_at FROM worker_leases WHERE partition_key = 'SOL/USDC'"),
+      one<{ count: string }>(this.database, "SELECT COUNT(*)::text AS count FROM outbox_events WHERE published_at IS NULL"),
+    ]);
+    const workerActive = Boolean(lease && new Date(lease.expires_at).getTime() > Date.now());
+    return { status: workerActive ? "OPERATIONAL" : "DEGRADED", workerActive, outboxPending: Number(outbox?.count ?? 0) };
   }
 
   async liveMarket(): Promise<MarketView> {

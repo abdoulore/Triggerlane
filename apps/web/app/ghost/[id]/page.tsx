@@ -1,9 +1,9 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { GhostApp } from "@/components/ghost-app";
+import { DetailScreen } from "@/features/detail/detail-screen";
 
 export default function GhostDetailPage() {
   const params = useParams<{ id: string }>();
-  return <GhostApp view="detail" ghostId={params.id} />;
+  return <DetailScreen triggerId={params.id} />;
 }

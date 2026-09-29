@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -10,6 +10,9 @@ import { AppError, GhostService } from "./service.js";
 import { runtimeConfig } from "./config.js";
 
 const COOKIE_NAME = "ghost_session";
+// The SSE response writes its own headers, so it has to use the same origin the
+// CORS plugin is registered with rather than a second copy of the expression.
+const webOrigin = process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -29,6 +32,21 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
   const trustProxy = trustedProxyHops > 0 ? (_address: string, hop: number) => hop < trustedProxyHops : false;
   const logger = process.env.NODE_ENV === "test" ? false : { redact: { paths: ["req.headers.cookie", "req.headers.authorization", "req.headers['idempotency-key']", "res.headers['set-cookie']"], censor: "[REDACTED]" } };
   const app = Fastify({ logger, trustProxy });
+
+  // Every mutation here takes no body: arm, pause, resume, cancel and reset all
+  // act on the route's id alone. A client that still sets a JSON content-type on
+  // those calls used to hit the default parser, which throws on an empty payload
+  // and surfaced as a 500 rather than the success the request deserved. An empty
+  // payload means "no fields", so it parses as such.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body: string, done) => {
+    const text = typeof body === "string" ? body.trim() : "";
+    if (text.length === 0) return done(null, {});
+    try {
+      done(null, JSON.parse(text) as unknown);
+    } catch {
+      done(new AppError("VALIDATION_ERROR", "Request body is not valid JSON.", 400), undefined);
+    }
+  });
   const db = database ?? (await getDatabase());
   const service = new GhostService(db);
   const baseConfig = runtimeConfig();
@@ -51,7 +69,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     hook: "onRequest",
   });
   await app.register(cors, {
-    origin: process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
+    origin: webOrigin,
     credentials: true,
   });
 
@@ -67,7 +85,12 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     if (process.env.NODE_ENV !== "production") return;
     const expected = process.env.OPERATIONS_TOKEN;
     if (!expected || expected.length < 32) throw new AppError("OPERATIONS_NOT_CONFIGURED", "Operational diagnostics are unavailable.", 404);
-    if (request.headers.authorization !== `Bearer ${expected}`) throw new AppError("OPERATIONS_UNAUTHORIZED", "Operational diagnostics require authorization.", 401);
+    // Compare in constant time so a wrong token cannot be narrowed down by timing.
+    const offered = Buffer.from(String(request.headers.authorization ?? ""));
+    const wanted = Buffer.from(`Bearer ${expected}`);
+    if (offered.length !== wanted.length || !timingSafeEqual(offered, wanted)) {
+      throw new AppError("OPERATIONS_UNAUTHORIZED", "Operational diagnostics require authorization.", 401);
+    }
   }
 
   function consumeLimit(key: string, maximum: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
@@ -344,7 +367,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
     return result;
   });
 
-  app.get("/api/strategies", { preHandler: requireSession }, async () => service.strategies());
+  app.get("/api/strategies", { preHandler: requireSession }, async (request) => service.strategies(request.userId!));
   app.get("/api/execution-targets", { preHandler: requireSession }, async () => service.executionTargets());
   app.post("/api/compiler/preview", { preHandler: requireSession }, async (request) => service.compilerPreview(request.body));
   app.post("/api/strategies/:id/use", { preHandler: requireSession }, async (request) => {
@@ -356,6 +379,10 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
   });
 
   app.get("/api/live-market", { preHandler: requireSession }, async () => service.liveMarket());
+
+  // Session-guarded worker health for the product UI. /health/diagnostics stays
+  // operations-only, so polling it from the browser 401s in production.
+  app.get("/api/engine-status", { preHandler: requireSession }, async () => service.engineStatus());
 
   app.get("/api/events", { preHandler: requireSession }, async (request, reply) => {
     const sessionKey = request.sessionToken!;
@@ -370,7 +397,7 @@ export async function buildServer(database?: PGlite, limitOverrides: Partial<Ret
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
-      "access-control-allow-origin": process.env.WEB_ORIGIN ?? "http://127.0.0.1:5173",
+      "access-control-allow-origin": webOrigin,
       "access-control-allow-credentials": "true",
     });
     const write = (event: unknown) => reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
