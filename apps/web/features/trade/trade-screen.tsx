@@ -27,6 +27,45 @@ const MarketChart = dynamic(() => import("@/components/market-chart").then((modu
 });
 
 const TRIGGER_COLUMNS = "1.6fr 2.4fr 0.9fr 1fr 0.7fr 0.9fr";
+const targetInputStyle = { height: 34, padding: "0 8px", textAlign: "right", color: "var(--text)", background: "var(--panel)", border: "1px solid var(--line-strong)", borderRadius: "var(--radius)", fontSize: 12 } as const;
+
+// Fixed digits, then trailing zeros dropped, so a tiny ratio never becomes "5e-7".
+const trimmed = (value: number, digits: number) => value.toFixed(digits).replace(/\.?0+$/, "");
+const ratioToPercent = (ratio: string) => trimmed(Number(ratio) * 100, 8);
+const percentToRatio = (percent: string) => trimmed(Number(percent) / 100, 10);
+const isNumber = (text: string) => text.trim() !== "" && Number.isFinite(Number(text));
+
+/*
+ * Funding and P&L are stored as ratios and typed as percents. Converting on
+ * every keystroke threw away half-typed values like "0." or "-", so this keeps
+ * the text as typed and only saves it once it reads as a number.
+ */
+function PercentTargetInput({ label, ratio, onChange }: { label: string; ratio: string; onChange: (ratio: string) => void }) {
+  const [text, setText] = useState(() => ratioToPercent(ratio));
+  const [seen, setSeen] = useState(ratio);
+
+  // A new target from outside, such as an idea being applied, replaces the text.
+  if (ratio !== seen) {
+    setSeen(ratio);
+    if (!isNumber(text) || percentToRatio(text) !== percentToRatio(ratioToPercent(ratio))) setText(ratioToPercent(ratio));
+  }
+
+  return (
+    <input
+      className={ui.mono}
+      aria-label={label}
+      value={text}
+      inputMode="decimal"
+      onChange={(event) => {
+        setText(event.target.value);
+        if (isNumber(event.target.value)) onChange(percentToRatio(event.target.value));
+      }}
+      // Leaving the box with something unusable shows the target that is actually set.
+      onBlur={() => { if (!isNumber(text)) setText(ratioToPercent(ratio)); }}
+      style={targetInputStyle}
+    />
+  );
+}
 const conditionOrder: Metric[] = ["PRICE", "FUNDING", "PNL"];
 
 type Draft = GhostDraft;
@@ -345,17 +384,22 @@ export function TradeScreen() {
                   <option value="GTE">{operatorLabel.GTE}</option>
                   <option value="LTE">{operatorLabel.LTE}</option>
                 </select>
-                <input
-                  className={ui.mono}
-                  aria-label={`${condition.metric} target`}
-                  value={condition.metric === "PRICE" ? condition.target : String(Number(condition.target) * 100)}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    const target = condition.metric === "PRICE" ? raw : String(Number(raw) / 100);
-                    dispatch({ type: "condition", metric: condition.metric, field: "target", value: target });
-                  }}
-                  style={{ height: 34, padding: "0 8px", textAlign: "right", color: "var(--text)", background: "var(--panel)", border: "1px solid var(--line-strong)", borderRadius: "var(--radius)", fontSize: 12 }}
-                />
+                {condition.metric === "PRICE" ? (
+                  <input
+                    className={ui.mono}
+                    aria-label={`${condition.metric} target`}
+                    value={condition.target}
+                    inputMode="decimal"
+                    onChange={(event) => dispatch({ type: "condition", metric: condition.metric, field: "target", value: event.target.value })}
+                    style={targetInputStyle}
+                  />
+                ) : (
+                  <PercentTargetInput
+                    label={`${condition.metric} target`}
+                    ratio={condition.target}
+                    onChange={(target) => dispatch({ type: "condition", metric: condition.metric, field: "target", value: target })}
+                  />
+                )}
                 {condition.metric === "FUNDING" && (
                   <span className={`${ui.mono} ${Math.abs(Number(fundingAprPercent(condition.target))) > 45 ? ui.warn : ui.muted}`} style={{ gridColumn: "2 / -1", fontSize: 11, textAlign: "right" }}>
                     {fundingApr(condition.target)}

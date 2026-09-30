@@ -49,6 +49,35 @@ test("the order rail scrolls its middle while the action stays pinned", async ({
   expect(overflow.document).toBeLessThanOrEqual(overflow.viewport);
 });
 
+test("funding and P&L targets take a value typed one key at a time", async ({ page }) => {
+  await page.goto("/trade");
+  await expect(page.getByRole("button", { name: /Place buy trigger/ })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "+ Funding" }).click();
+  await page.getByRole("button", { name: "+ Position P&L" }).click();
+
+  // Half-typed values like "0." and "-" used to be converted away mid-word.
+  const funding = page.getByLabel("FUNDING target");
+  await funding.fill("");
+  await funding.pressSequentially("0.0025");
+  await expect(funding).toHaveValue("0.0025");
+  // 0.0025% an hour is 21.9% a year.
+  await expect(page.getByText("21.9% APR")).toBeVisible();
+
+  await funding.fill("");
+  await funding.pressSequentially("-0.001");
+  await expect(funding).toHaveValue("-0.001");
+
+  const pnl = page.getByLabel("PNL target");
+  await pnl.fill("");
+  await pnl.pressSequentially("12.5");
+  await expect(pnl).toHaveValue("12.5");
+
+  // Leaving a box with nothing usable in it shows the target that is still set.
+  await pnl.fill("");
+  await pnl.blur();
+  await expect(pnl).toHaveValue("12.5");
+});
+
 test("the rebuilt Trade screen passes the accessibility gate", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/trade");
